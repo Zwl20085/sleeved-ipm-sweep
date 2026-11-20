@@ -1,0 +1,12 @@
+# AC copper loss factor of the solid hairpin conductors (active length only) vs speed.
+# Each point is a separate solid-conductor transient run (1.5 electrical periods).
+[sweep]
+name = "acloss_sleeved_bridged"
+physics = "acloss"
+topology = "sleeved_bridged"
+
+[base]
+gamma = 125.0
+
+[grid]
+em_rpm = [1000.0, 10000.0, 20000.0]

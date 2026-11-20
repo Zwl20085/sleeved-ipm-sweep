@@ -1,0 +1,192 @@
+[
+ {
+  "file": "stator_saved.json",
+  "maxwell_overrides": {},
+  "status": "ok"
+ },
+ {
+  "file": "sleeved_bridged_saved.json",
+  "maxwell_overrides": {},
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 10.8245595432,
+   "RD_Lpm_lay2": 18.8408014162
+  }
+ },
+ {
+  "file": "sleeved_bridged_v1.json",
+  "maxwell_overrides": {
+   "Wcf": "0.5mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 12.5642103201,
+   "RD_Lpm_lay2": 20.4030597947
+  }
+ },
+ {
+  "file": "sleeved_bridged_v2.json",
+  "maxwell_overrides": {
+   "Wcf": "1mm",
+   "RD_WO_lay1": "0.5mm",
+   "RD_WO_lay2": "0.5mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 12.6564125965,
+   "RD_Lpm_lay2": 20.4030597947
+  }
+ },
+ {
+  "file": "sleeved_bridged_v3.json",
+  "maxwell_overrides": {
+   "Wcf": "1.5mm",
+   "RD_WO_lay1": "1.5mm",
+   "RD_WO_lay2": "1.5mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 10.9180681722,
+   "RD_Lpm_lay2": 18.8408014162
+  }
+ },
+ {
+  "file": "sleeved_bridged_v4.json",
+  "maxwell_overrides": {
+   "RD_FB_lay1": "0.5mm",
+   "RD_FB_lay2": "0.5mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 11.4253592163,
+   "RD_Lpm_lay2": 21.0499041972
+  }
+ },
+ {
+  "file": "sleeved_bridged_v5.json",
+  "maxwell_overrides": {
+   "Wcf": "1mm",
+   "RD_FB_lay1": "1.5mm",
+   "RD_FB_lay2": "1.5mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 11.3862365519,
+   "RD_Lpm_lay2": 20.8722336849
+  }
+ },
+ {
+  "file": "sleeved_bridged_v6.json",
+  "maxwell_overrides": {
+   "Wcf": "0.5mm",
+   "RD_WO_lay1": "1.5mm",
+   "RD_WO_lay2": "0.5mm",
+   "RD_FB_lay1": "0.5mm",
+   "RD_FB_lay2": "1.5mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 12.6804583445,
+   "RD_Lpm_lay2": 21.9100374813
+  }
+ },
+ {
+  "file": "sleeved_bridged_v7.json",
+  "maxwell_overrides": {
+   "Wcf": "2mm",
+   "RD_WO_lay1": "0.5mm",
+   "RD_WO_lay2": "1.5mm",
+   "RD_FB_lay1": "1.5mm",
+   "RD_FB_lay2": "0.5mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 10.8994427932,
+   "RD_Lpm_lay2": 20.526579445
+  }
+ },
+ {
+  "file": "sleeved_bridgeless_saved.json",
+  "maxwell_overrides": {},
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 14.3120346648,
+   "RD_Lpm_lay2": 24.9089792656
+  }
+ },
+ {
+  "file": "sleeved_bridgeless_v1.json",
+  "maxwell_overrides": {
+   "Wcf": "2mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 12.5816818778,
+   "RD_Lpm_lay2": 23.3504346245
+  }
+ },
+ {
+  "file": "sleeved_bridgeless_v2.json",
+  "maxwell_overrides": {
+   "w_tip": "0.5mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 14.3120346648,
+   "RD_Lpm_lay2": 24.9089792656
+  }
+ },
+ {
+  "file": "sleeved_bridgeless_v3.json",
+  "maxwell_overrides": {
+   "Wcf": "1mm",
+   "w_tip": "2mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 13.7378520081,
+   "RD_Lpm_lay2": 24.3906788724
+  }
+ },
+ {
+  "file": "sleeved_bridgeless_v4.json",
+  "maxwell_overrides": {
+   "Wcf": "1.5mm",
+   "RD_WO_lay1": "1mm",
+   "RD_WO_lay2": "1mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 12.5816818778,
+   "RD_Lpm_lay2": 23.3504346245
+  }
+ },
+ {
+  "file": "sleeved_bridgeless_v5.json",
+  "maxwell_overrides": {
+   "Wcf": "1mm",
+   "w_tip": "1.5mm",
+   "RD_WO_lay1": "0.5mm",
+   "RD_WO_lay2": "1.5mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 13.7378520081,
+   "RD_Lpm_lay2": 23.3504346245
+  }
+ },
+ {
+  "file": "sleeved_bridgeless_v6.json",
+  "maxwell_overrides": {
+   "Wcf": "2mm",
+   "w_tip": "0.5mm",
+   "RD_WO_lay1": "1.5mm",
+   "RD_WO_lay2": "0.5mm"
+  },
+  "status": "ok",
+  "derived": {
+   "RD_Lpm_lay1": 11.4144742486,
+   "RD_Lpm_lay2": 23.3504346245
+  }
+ }
+]

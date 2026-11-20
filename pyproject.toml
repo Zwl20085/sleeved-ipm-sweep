@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sleeved-ipm-sweep"
+version = "0.1.0"
+description = "Coupled Maxwell 2D / MAPDL parametric sweeps for carbon-fibre-sleeved interior-permanent-magnet rotors"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Wentao Zhang" }]
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy>=1.23",
+    "scipy>=1.9",
+    "matplotlib>=3.6",
+    "pandas>=1.5",
+    "psutil>=5.9",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+# Needed only for the Maxwell driver. PyAEDT is distributed as "pyaedt"; the
+# import path ansys.aedt.core is used, which exists from 0.9 onwards.
+# Tested with 0.24.1 against AEDT 2024 R1.
+aedt = ["pyaedt>=0.24.1"]
+dev = ["pytest>=7", "ruff>=0.4", "shapely>=2.0"]
+# Only to regenerate the Maxwell reference fixtures (tools/make_maxwell_fixtures.py).
+fixtures = ["shapely>=2.0"]
+
+[project.scripts]
+sipm = "sipm.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "ansys: needs a licensed Ansys installation (Maxwell and/or MAPDL); deselected by default",
+]
+addopts = "-m 'not ansys'"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = ["E741", "B905"]
