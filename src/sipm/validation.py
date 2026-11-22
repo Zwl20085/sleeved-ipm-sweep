@@ -37,14 +37,75 @@ def ring_params(case: str, **kw) -> Params:
     return p
 
 
+def _ring_bodies(p: Params):
+    disc = analytic.isotropic(p.lam_E * 1e3, p.lam_nu, p.lam_density * 1e-12, alpha=p.lam_cte)
+    ring = analytic.orthotropic(p.sleeve_E_radial * 1e3, p.sleeve_E_hoop * 1e3, p.sleeve_nu_hoop_radial,
+                                p.sleeve_density * 1e-12, alpha_r=p.sleeve_cte_radial, alpha_t=p.sleeve_cte_hoop)
+    return disc, ring
+
+
 def ring_reference(p: Params, a: float, t: float) -> dict:
     """Closed form for the disc + ring with the materials, speed, interference and uniform
     temperature change of ``p`` (plane stress)."""
     w = p.mech_rpm * 2 * math.pi / 60
-    disc = analytic.isotropic(p.lam_E * 1e3, p.lam_nu, p.lam_density * 1e-12, alpha=p.lam_cte)
-    ring = analytic.orthotropic(p.sleeve_E_radial * 1e3, p.sleeve_E_hoop * 1e3, p.sleeve_nu_hoop_radial,
-                                p.sleeve_density * 1e-12, alpha_r=p.sleeve_cte_radial, alpha_t=p.sleeve_cte_hoop)
+    disc, ring = _ring_bodies(p)
     return analytic.summary(a, a + t, disc, ring, w, p.interference, dT=p.mech_delta_t)
+
+
+def ring_liftoff_reference(p: Params, a: float, t: float, temperature: float | None = None) -> float:
+    """Closed-form lift-off speed (rpm) of the disc + ring with the materials and interference of
+    ``p`` at the uniform ``temperature`` (degC; default ``p.mech_temperature``) against
+    ``p.mech_ref_temperature``."""
+    temp = p.mech_temperature if temperature is None else temperature
+    disc, ring = _ring_bodies(p)
+    w = analytic.liftoff_speed(a, a + t, disc, ring, p.interference, dT=temp - p.mech_ref_temperature)
+    return w * 60 / (2 * math.pi)
+
+
+def ring_liftoff_check(radius: float = 71.1, t_sleeve: float = 1.5, interference: float = 0.1,
+                       rpm: float = 20000.0, hot: float = 120.0, mesh: float = 0.5, cfg: Config | None = None,
+                       workdir: str | Path | None = None) -> dict:
+    """FE lift-off speed of the disc + orthotropic sleeve (load cases standstill and rated, cold =
+    the fitting temperature and ``hot``) against the closed form. Returns per temperature label
+    the FE speed, its basis, the closed-form speed and the relative error, and the FE result."""
+    cfg = cfg or Config()
+    p = ring_params("orthotropic", interference=interference, mech_rpm=rpm, mech_mesh=mesh, mech_mesh_fine=mesh,
+                    mech_temperature=hot, mech_cases="standstill_cold,rated_cold,standstill_hot,rated_hot")
+    p = p.replace(mech_temperature_cold=p.mech_ref_temperature)
+    wd = Path(workdir) if workdir else cfg.workdir / "validation_ring_liftoff"
+    fe = solve_mech(p, cfg, wd, model=mech_model_ring(radius, t_sleeve))
+    rows = []
+    for label, temp in (("cold", p.mech_temperature_cold), ("hot", p.mech_temperature)):
+        cf = ring_liftoff_reference(p, radius, t_sleeve, temp)
+        f = fe[f"liftoff_rpm_{label}"]
+        rows.append(dict(label=label, temperature=temp, fe=f, basis=fe[f"liftoff_basis_{label}"], closed_form=cf,
+                         rel_error=(f - cf) / cf))
+    return dict(rows=rows, fe=fe, params=p)
+
+
+def liftoff_check(p: Params, label: str = "cold", factor: float = 0.95, cfg: Config | None = None,
+                  workdir: str | Path | None = None) -> dict:
+    """Lift-off speed of a rotor from its standstill, rated and overspeed cases at one temperature
+    (``label`` 'cold' or 'hot'), then two direct single-case runs: at that speed (the minimum
+    contact pressure should be ~0) and at ``factor`` x that speed (no element should be open)."""
+    if label not in ("cold", "hot"):
+        raise ValueError("label must be 'cold' or 'hot'")
+    cfg = cfg or Config()
+    base = Path(workdir) if workdir else cfg.workdir / f"validation_liftoff_{p.topology}_{label}"
+    q = p.replace(mech_cases=f"standstill_{label},rated_{label},overspeed_{label}")
+    cases = solve_mech(q, cfg, base / "cases")
+    rpm = cases[f"liftoff_rpm_{label}"]
+    temp = q.case_speed_temperature(f"standstill_{label}")[1]
+    out = dict(topology=p.topology, label=label, temperature=temp, liftoff_rpm=rpm,
+               basis=cases[f"liftoff_basis_{label}"], cases=cases, direct={})
+    if not (math.isfinite(rpm) and rpm > 0):
+        return out
+    for tag, s in (("at", rpm), ("below", factor * rpm)):
+        r = solve_mech(p.replace(mech_cases="", mech_rpm=s, mech_temperature=temp), cfg, base / f"direct_{tag}")
+        out["direct"][tag] = dict(rpm=s, contact_p_min=r["contact_p_min"], contact_p_max=r["contact_p_max"],
+                                  sleeve_open_fraction=r["sleeve_open_fraction"])
+    out["p_min_standstill"] = cases[f"contact_p_min__standstill_{label}"]
+    return out
 
 
 def ring_check(case: str = "orthotropic", radius: float = 71.1, t_sleeve: float = 1.5,

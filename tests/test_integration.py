@@ -104,6 +104,79 @@ def test_mech_point_thermal(cfg):
     assert hot["contact_p_min"] > cold["contact_p_min"]
 
 
+@need_mapdl
+def test_ring_liftoff_against_closed_form(cfg):
+    """FE lift-off speed of the disc + orthotropic sleeve, extrapolated element by element from
+    standstill and 20000 rpm, against the closed form, isothermal and 100 K hot."""
+    from sipm.validation import ring_liftoff_check
+
+    r = ring_liftoff_check(cfg=cfg, workdir=cfg.workdir / "ring_liftoff")
+    for row in r["rows"]:
+        print(f"[ring lift-off {row['label']}, {row['temperature']:g} degC] FE {row['fe']:.1f} rpm, closed form "
+              f"{row['closed_form']:.1f} rpm, error {100 * row['rel_error']:+.4f} % ({row['basis']})")
+        assert abs(row["rel_error"]) < 1e-3
+    fe = r["fe"]
+    assert fe["mech_case"] == "rated_hot" and fe["sh_sleeve_max"] == fe["sh_sleeve_max__rated_hot"]
+    assert math.isclose(fe["sh_sleeve_max__rated_cold"], 192.4089, rel_tol=1e-5)   # = the single-case run
+
+
+@need_mapdl
+def test_mech_load_cases(cfg):
+    """The six cases of the default bridge-retained point, 120 degC hot: the rated cold case is the
+    single-case default point, the envelope picks the expected cases."""
+    from sipm.mapdl import solve_mech
+    from sipm.params import MECH_CASES
+
+    p = default_params("sleeved_bridged", mech_temperature=120.0, mech_cases=",".join(MECH_CASES))
+    r = solve_mech(p, cfg, cfg.workdir / "mech_load_cases")
+    for c in MECH_CASES:
+        print(f"[mech cases] {c:<15s} svm_lam_max {r[f'svm_lam_max__{c}']:7.1f}  sh_sleeve_max "
+              f"{r[f'sh_sleeve_max__{c}']:7.1f}  contact p min {r[f'contact_p_min__{c}']:6.3f}  "
+              f"open {r[f'sleeve_open_fraction__{c}']:.3f}  SF {r[f'sleeve_sf__{c}']:.2f}")
+    print(f"[mech cases] lift-off cold {r['liftoff_rpm_cold']:.0f} rpm ({r['liftoff_basis_cold']}), "
+          f"hot {r['liftoff_rpm_hot']:.0f} rpm ({r['liftoff_basis_hot']}), wall {r['mech_wall_s']:.1f} s")
+    assert math.isclose(r["sh_sleeve_max__rated_cold"], 223.920281347, rel_tol=1e-6)   # single default point
+    assert r["mech_case"] == "rated_hot" and r["sh_sleeve_max"] == r["sh_sleeve_max__rated_hot"]
+    col = lambda k, c: r[f"{k}__{c}"]  # noqa: E731
+    for t in ("cold", "hot"):
+        # centrifugal load: sleeve hoop stress rises and the interface pressure falls with speed
+        sh = [col("sh_sleeve_max", f"{s}_{t}") for s in ("standstill", "rated", "overspeed")]
+        pm = [col("contact_p_min", f"{s}_{t}") for s in ("standstill", "rated", "overspeed")]
+        assert sh[0] < sh[1] < sh[2] and pm[0] > pm[1] > pm[2]
+        assert col("svm_lam_max", f"rated_{t}") < col("svm_lam_max", f"overspeed_{t}")
+    for s in ("standstill", "rated", "overspeed"):
+        # heating adds interference (steel grows, the fibre direction does not)
+        assert col("sh_sleeve_max", f"{s}_hot") > col("sh_sleeve_max", f"{s}_cold")
+        assert col("contact_p_min", f"{s}_hot") > col("contact_p_min", f"{s}_cold")
+    # the envelope is the extreme over the case columns
+    for k, how in (("svm_lam_max", max), ("sh_sleeve_max", max), ("sleeve_fi_tsai_wu", max),
+                   ("sleeve_sf", min), ("contact_p_min", min)):
+        vals = {c: col(k, c) for c in MECH_CASES}
+        assert r[f"{k}__worst"] == how(vals.values()) and vals[r[f"{k}__worst_case"]] == r[f"{k}__worst"]
+    # names only where the margin is large: hoop stress hot vs cold +50 % (overspeed vs rated +5 %, but
+    # monotonic in speed, asserted above); contact pressure cold vs hot -50 %, overspeed vs rated -13 %
+    assert r["sh_sleeve_max__worst_case"] == "overspeed_hot"
+    assert r["contact_p_min__worst_case"] == "overspeed_cold"
+    assert r["liftoff_rpm_hot"] > r["liftoff_rpm_cold"] > p.overspeed_factor * p.mech_rpm   # 51.6k, 39.4k, 24k
+
+
+@need_mapdl
+def test_mech_liftoff_direct(cfg):
+    """A direct run at the extrapolated lift-off speed of the default bridge-retained rotor opens the
+    first contact element (min pressure ~0), a run at 0.95 x that speed has none open."""
+    from sipm.validation import liftoff_check
+
+    r = liftoff_check(default_params("sleeved_bridged"), "cold", cfg=cfg, workdir=cfg.workdir / "mech_liftoff")
+    at, below = r["direct"]["at"], r["direct"]["below"]
+    print(f"[mech lift-off] {r['liftoff_rpm']:.1f} rpm ({r['basis']}); p_min at standstill "
+          f"{r['p_min_standstill']:.4f} MPa, at lift-off {at['contact_p_min']:.5f} MPa "
+          f"(open {at['sleeve_open_fraction']:.4f}), at 0.95x {below['contact_p_min']:.4f} MPa "
+          f"(open {below['sleeve_open_fraction']:.4f})")
+    # docs/validation.md section 11: 0.026 MPa (1.0 % of the standstill minimum), one element open
+    assert at["sleeve_open_fraction"] > 0 and abs(at["contact_p_min"]) < 2e-2 * r["p_min_standstill"]
+    assert below["sleeve_open_fraction"] == 0 and below["contact_p_min"] > 0
+
+
 @pytest.fixture(scope="module")
 def session(cfg):
     from sipm.maxwell import MaxwellSession

@@ -171,6 +171,12 @@ failed. AEDT is restarted every `aedt_restart_every` (10) EM points.
   smallest Tsai-Wu safety factor, at `sleeve_sf_r` / `sleeve_sf_theta`. The strengths behind
   them (`sleeve_Xt` ... `sleeve_S`) are illustrative class values: supply your material's.
   Sweeps cached by an earlier version are reused but lack these columns.
+* **Load cases** (`mech_cases`, e.g. `"standstill_cold,rated_hot,overspeed_hot"`): every
+  output above once per case as `<output>__<case>` (e.g. `sh_sleeve_max__overspeed_hot`), the
+  worst case over them as `<output>__worst` with the governing case in `<output>__worst_case`,
+  and the lift-off speeds `liftoff_rpm_cold` / `liftoff_rpm_hot` (NaN for the bridgeless rotor,
+  whose contact is not linear in speed); the un-suffixed columns then
+  hold the case named in `mech_case` (`rated_hot` if requested).
 
 The two figures below are drawn from the sample tables in `examples/data`
 (`python docs/make_figures.py --results`). They are outputs of this toolchain with the
@@ -246,6 +252,9 @@ In now:
 * **Sleeve stress field and failure**: per-node sleeve stresses in cylindrical axes, the
   largest radial tension and r-theta shear, ply failure indices (maximum stress, Tsai-Wu,
   Hashin) and a safety factor at every stress point.
+* **Load cases as outputs**: standstill, rated speed and overspeed, each cold and hot, reported
+  together with the worst case over them and the lift-off speed of the sleeve, validated
+  against the closed form and by direct runs at the predicted speed.
 
 Proposed next:
 
@@ -261,9 +270,7 @@ Proposed next:
    transition, and cure residual stress.
 5. **3D failure and long-term behaviour.** 3D failure criteria (Puck, LaRC, 3D Hashin),
    delamination, and creep relaxation of the prestress.
-6. **Load cases as outputs.** A set of standard load cases reported together: standstill cold
-   and hot, overspeed, and the lift-off speed.
-7. **Calibration.** Fitting the ply data to measurements (ring tests) and propagating the
+6. **Calibration.** Fitting the ply data to measurements (ring tests) and propagating the
    uncertainty in fibre volume fraction.
 
 ## 8. Cite

@@ -182,6 +182,46 @@ def disc_ring(a, b, disc: Body, ring: Body, w, delta, dT=0.0):
     return dict(disc=fd, ring=fr, p_interface=float(p_int), in_contact=bool(contact), coeffs=x)
 
 
+def coupled_pressure(a, b, disc: Body, ring: Body, w, delta, dT=0.0) -> float:
+    """Signed interface pressure of the coupled (always in contact) solution, MPa.
+
+    Equal to ``disc_ring(...)["p_interface"]`` while the parts stay in contact; negative where
+    :func:`disc_ring` finds them separated (and reports 0). The coupled problem is linear in its
+    loads, so this pressure is exactly p(w) = p0(delta, dT) - c w^2."""
+    sol = disc_ring(a, b, disc, ring, w, delta, dT)
+    if sol["in_contact"]:
+        return sol["p_interface"]
+    # disc_ring re-solved the separated parts; repeat the coupled solve for the signed value
+    x = _coupled_coeffs(a, b, disc, ring, w, delta, dT)
+    _, sra, _ = ring.basis(a, w, dT)
+    return float(-(sra[0] * x[1] + sra[1] * x[2] + sra[2]))
+
+
+def _coupled_coeffs(a, b, disc: Body, ring: Body, w, delta, dT):
+    ud, srd, _ = disc.basis(a, w, dT)
+    ura, sra, _ = ring.basis(a, w, dT)
+    _, srb, _ = ring.basis(b, w, dT)
+    M = np.array([[0.0, srb[0], srb[1]], [-srd[0], sra[0], sra[1]], [-ud[0], ura[0], ura[1]]])
+    rhs = np.array([-srb[2], srd[2] - sra[2], delta - ura[2] + ud[2]])
+    return np.linalg.solve(M, rhs)
+
+
+def liftoff_speed(a, b, disc: Body, ring: Body, delta, dT=0.0) -> float:
+    """Lift-off speed (rad/s) of the disc + ring: the speed at which the interface pressure of the
+    coupled solution falls to zero, at uniform temperature change ``dT`` from the fitted state.
+
+    By superposition p(w) = p0 - c w^2 with p0 = p(0; delta, dT) and -c = p(1 rad/s; 0, 0) (pure
+    centrifugal load), so w_lift = sqrt(p0 / c). Returns 0 if the parts are already apart at
+    standstill (p0 <= 0) and ``inf`` if the pressure does not fall with speed (c <= 0)."""
+    p0 = coupled_pressure(a, b, disc, ring, 0.0, delta, dT)
+    c = -coupled_pressure(a, b, disc, ring, 1.0, 0.0, 0.0)
+    if p0 <= 0:
+        return 0.0
+    if c <= 0:
+        return math.inf
+    return math.sqrt(p0 / c)
+
+
 def von_mises_plane_stress(sr, st):
     return np.sqrt(sr * sr - sr * st + st * st)
 

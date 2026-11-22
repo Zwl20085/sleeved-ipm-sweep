@@ -322,6 +322,90 @@ The deck is plain APDL, written by Python, run in batch, and post-processed into
      `r["_sleeve_nodes"]` (not cached by the sweep);
    * the sleeve failure indices and safety factor of section 4.4.
 
+### 3.1 Load cases and lift-off speed
+
+A sleeved rotor is designed against a set of operating states, not one: the sleeve is most
+loaded at overspeed and hot (the steel grows into it), the interface pressure is lowest at
+overspeed and cold, standstill shows what the interference and the temperature do without the
+centrifugal load, and the sleeve stops retaining the rotor at the lift-off speed
+(validation.md section 11 has the six cases of the default rotor). `mech_cases` (a comma-separated list; default `''`,
+the single case `mech_rpm` at `mech_temperature`, deck and columns as before) selects cases
+from six, speed x temperature:
+
+| case | speed | temperature |
+|---|---|---|
+| `standstill_cold`, `standstill_hot` | 0 | `mech_temperature_cold` (default 20 degC), `mech_temperature` |
+| `rated_cold`, `rated_hot` | `mech_rpm` | as above |
+| `overspeed_cold`, `overspeed_hot` | `overspeed_factor` x `mech_rpm` (default 1.2) | as above |
+
+The interference is always defined at `mech_ref_temperature` (section 4.3).
+
+**Solution.** Each case is its own MAPDL run of the single-case deck (`Params.for_case`: speed
+and temperature of the case, everything else equal), in `<point>/<case>/`; cases with equal
+speed and temperature are run once. One run with a load step per case was not chosen: (a) a
+load step starts from the state of the previous one, so with friction (`mu_sleeve`,
+frictional magnets) a case's result would depend on which cases come before it, while
+separate runs load every case from the fitted state in one step exactly as a single point is
+loaded; (b) a case that fails to converge would stop all later cases; (c) the saving is small,
+because meshing and start-up are a few seconds of a run that is dominated by the contact
+solution. The mesh commands are the same in every case run, so the mesh, and the element and
+node numbers, are identical between cases (checked for the contact elements, below). The
+cases are run in the fixed order of the table, so neither the results nor the columns depend
+on the order of the list. A failing case fails the point.
+
+**Columns.** For every requested case, each output of a single point gets a column
+`<output>__<case>` (for example `sh_sleeve_max__overspeed_hot`; two underscores, so that every
+column stays a valid identifier for pandas, the MATLAB `readtable` reader and TOML). The
+un-suffixed columns hold the case named in `mech_case`: `rated_hot` when it is requested (that
+is `mech_rpm` at `mech_temperature`, which is what they hold without `mech_cases`), otherwise
+the first case of the list. Worst-case envelope over the requested cases, each with the case
+that governs in `<output>__worst_case` (ties go to the earlier case of the table above):
+maximum of `svm_lam_max`, `sh_sleeve_max`, `sr_sleeve_max`, the four sleeve failure indices and
+`sleeve_open_fraction`; minimum of `sleeve_sf` and `contact_p_min`, as `<output>__worst`.
+`mech_wall_s` is the wall time of the whole point.
+
+**Lift-off speed.** With the sleeve contact closed everywhere and frictionless and the magnets
+bonded, the model is linear in its loads: interference, uniform temperature change and the
+centrifugal body force, which is proportional to omega^2. Every contact element's pressure is
+therefore p_e(omega) = p0_e - c_e omega^2 at fixed temperature. The pressure used is the
+element value of `CONT,PRES` of the sleeve contact elements, the quantity whose minimum is
+`contact_p_min`; decks of a load-case set write it, with element number, centroid and contact
+status, to `sipm_contact_elems.txt` (single-case decks do not). From two cases at the same
+temperature and different speeds, each element's line is fitted through its two values (the
+elements are matched by number and checked by centroid), and the lift-off speed is the
+smallest speed at which an element's pressure reaches zero, min over the elements with
+c_e > 0 of sqrt(p0_e / c_e): the first point of the interface to open. It is taken element by
+element because the element with the lowest pressure can change with speed; extrapolating the
+minimum pressure of each case would give a different, wrong speed. Rules, per temperature
+(`liftoff_rpm_cold` at `mech_temperature_cold`, `liftoff_rpm_hot` at `mech_temperature`; every
+requested case at that temperature is used, whatever its label):
+
+* the two cases are the lowest and the highest speed whose contact is fully closed (every
+  element sliding or sticking, with positive pressure); a faster case that is already partly
+  open is not used, because its pressures are no longer on the line;
+* the slowest case open: lift-off 0 if it is at standstill (the interface is open before the
+  rotor turns), NaN otherwise (lift-off is below every solved speed);
+* fewer than two fully closed cases at different speeds: NaN;
+* no element's pressure falls with speed: `inf`;
+* `mu_sleeve` != 0 or frictional magnets: NaN, the model is not linear;
+* the bridgeless rotor (`sleeved_bridgeless`): NaN, its contact is not linear in speed (below).
+
+`liftoff_basis_cold` / `_hot` names the two cases used or the reason for NaN / 0. Two checks of
+the linearity add a flag to it while the value is still reported: a case that is open below
+the extrapolated speed, and, when three or more fully closed speeds exist at the temperature,
+a middle one whose element pressures deviate from the two-point lines by more than 1 % of the
+element's standstill pressure (`loadcases.LINEARITY_TOL`; measured: 3e-5 in the bridge-retained
+rotor, 8.7 % in the bridgeless one).
+The closed form of the disc + ring (`sipm.analytic.liftoff_speed`, with temperature) uses the
+same superposition, p0 from interference and temperature at standstill and c from the
+centrifugal load alone. Validation: validation.md section 11. The linearity holds for the
+bridge-retained rotor (direct runs confirm the extrapolated speed to about 0.5 %) but not for
+the bridgeless rotor: its loose lamination pieces tilt, the contact at the piece edges beside
+the OD openings is partly open and changes with load, and the pressure there is not even
+monotonic in speed. The extrapolation would give 0 hot (an edge is open at standstill) and an
+overestimate cold, so its lift-off columns are NaN with a note in the basis; use the per-case
+`contact_p_min` and `sleeve_open_fraction` columns for that rotor.
+
 ## 4. Composite sleeve model
 
 The sleeve is one cylindrically orthotropic body (section 3, item 3). Its thirteen constants

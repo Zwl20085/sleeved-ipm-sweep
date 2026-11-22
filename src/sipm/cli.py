@@ -7,7 +7,7 @@
     sipm params     [--markdown] [--topology T]
     sipm geometry   [--topology T] [--set k=v ...] --out FILE.png
     sipm deck       [--topology T] [--set k=v ...] --out FILE.inp
-    sipm validate   ring|mesh|open-circuit [...]
+    sipm validate   ring|ring-liftoff|liftoff|mesh|open-circuit [...]
     sipm composite  --fibre F [--matrix M] [--vf V] [--angle DEG] [--model chamis|halpin_tsai|rom] [--toml]
 
 A sweep configuration (TOML):
@@ -164,7 +164,8 @@ def plot_results(df: pd.DataFrame, outdir: Path, physics: str, plot_cfg: dict | 
             _save_and_close(post.mtpa_lines, df, grp, note=note, out=f)
             files.append(f)
     elif physics == "mech":
-        for q in ("svm_rotor_max", "sh_sleeve_max"):
+        # with load cases (mech_cases) also the worst case over them
+        for q in ("svm_rotor_max", "sh_sleeve_max", "svm_lam_max__worst", "sh_sleeve_max__worst"):
             if q in ok:
                 f = outdir / f"{prefix}{q}_vs_interference.png"
                 _save_and_close(post.stress_lines, df, q, reference=plot_cfg.get(f"reference_{q}"), note=note, out=f)
@@ -222,8 +223,9 @@ def main(argv=None) -> int:
     s.add_argument("--model", default="chamis", help="micromechanics: chamis, halpin_tsai or rom")
     s.add_argument("--toml", action="store_true", help="also print the lines for a sweep's [base] table")
     s = sub.add_parser("validate")
-    s.add_argument("what", choices=["ring", "mesh", "open-circuit"])
-    s.add_argument("--case", default="orthotropic")
+    s.add_argument("what", choices=["ring", "ring-liftoff", "liftoff", "mesh", "open-circuit"])
+    s.add_argument("--case", default="orthotropic",
+                   help="ring: isotropic|orthotropic|thermal; liftoff: cold|hot (default cold)")
     s.add_argument("--topology", default="sleeved_bridged")
     s.add_argument("--workdir", default=None)
     a = ap.parse_args(argv)
@@ -305,6 +307,24 @@ def main(argv=None) -> int:
             for row in r["rows"]:
                 print(f"{row['quantity']:<40s} FE {row['fe']:12.5f}  closed form {row['closed_form']:12.5f}  "
                       f"error {100 * row['rel_error']:+.3f} %")
+        elif a.what == "ring-liftoff":
+            from .validation import ring_liftoff_check
+
+            for row in ring_liftoff_check(cfg=c)["rows"]:
+                print(f"lift-off {row['label']:<4s} ({row['temperature']:g} degC)  FE {row['fe']:10.1f} rpm  "
+                      f"closed form {row['closed_form']:10.1f} rpm  error {100 * row['rel_error']:+.4f} %  "
+                      f"[{row['basis']}]")
+        elif a.what == "liftoff":
+            from .params import default_params
+            from .validation import liftoff_check
+
+            label = a.case if a.case in ("cold", "hot") else "cold"
+            r = liftoff_check(default_params(a.topology), label, cfg=c)
+            print(f"{a.topology} lift-off ({label}, {r['temperature']:g} degC): {r['liftoff_rpm']:.1f} rpm "
+                  f"[{r['basis']}]")
+            for tag, d in r["direct"].items():
+                print(f"  direct run {tag:<5s} {d['rpm']:10.1f} rpm: contact p min {d['contact_p_min']:.4f} MPa, "
+                      f"open fraction {d['sleeve_open_fraction']:.4f}")
         elif a.what == "mesh":
             from .params import default_params
             from .validation import mesh_study

@@ -40,6 +40,29 @@ SOURCES = ("maxwell", "paper", "illustrative")
 CTE_FIELDS = ("lam_cte", "pm_cte", "sleeve_cte_hoop", "sleeve_cte_radial", "sleeve_cte_axial")
 CTE_RANGE = (-2.0e-5, 1.0e-4)             # 1/K; engineering solids lie well inside
 TEMPERATURE_RANGE = (-273.15, 500.0)      # degC, (exclusive, inclusive]
+# Mechanical load cases of ``mech_cases``, in their canonical order (the order in which they are
+# solved and reported, and which breaks ties of the envelope): speed x temperature.
+MECH_CASES = ("standstill_cold", "standstill_hot", "rated_cold", "rated_hot", "overspeed_cold", "overspeed_hot")
+CASE_SEPARATOR = "__"                     # per-case result column: <output>__<case>
+
+
+def parse_mech_cases(spec: str) -> tuple[str, ...]:
+    """Case names of a ``mech_cases`` string, in the order given ('' -> ()).
+
+    Comma-separated, surrounding blanks ignored; every name must be one of :data:`MECH_CASES`
+    and appear once."""
+    if not isinstance(spec, str):
+        raise ValueError(f"mech_cases must be a comma-separated string, got {spec!r}")
+    if not spec.strip():
+        return ()
+    names = tuple(s.strip() for s in spec.split(","))
+    bad = [n for n in names if n not in MECH_CASES]
+    if bad:
+        raise ValueError(f"mech_cases: unknown case(s) {bad}; allowed: {', '.join(MECH_CASES)}")
+    dup = sorted({n for n in names if names.count(n) > 1})
+    if dup:
+        raise ValueError(f"mech_cases: case(s) listed more than once: {dup}")
+    return names
 
 
 def _f(default, unit, source, doc, maxwell_name="", **kw):
@@ -305,6 +328,21 @@ class Params:
                                      "Named stress sections (svm_lam_max) leave out this length at both ends of "
                                      "each section, where it meets a sharp corner of the outline")
 
+    # ---- mechanical load-case set (sipm.mapdl.solve_mech_cases) ----------------------------
+    mech_cases: str = _f("", "-", "illustrative",
+                         "Comma-separated mechanical load cases solved for each point, from standstill_cold, "
+                         "standstill_hot, rated_cold, rated_hot, overspeed_cold, overspeed_hot ('' = the single "
+                         "case mech_rpm at mech_temperature, as before). Speeds: standstill 0, rated mech_rpm, "
+                         "overspeed overspeed_factor x mech_rpm; temperatures: hot mech_temperature, cold "
+                         "mech_temperature_cold. Each output gets one column per case (e.g. "
+                         "sh_sleeve_max__overspeed_hot), plus worst-case envelope columns and the lift-off speeds "
+                         "(docs/methods.md, 3.1)")
+    overspeed_factor: float = _f(1.2, "-", "illustrative",
+                                 "Overspeed load cases: speed = this factor x mech_rpm (>= 1)")
+    mech_temperature_cold: float = _f(20.0, "degC", "illustrative",
+                                      "Uniform rotor temperature of the '_cold' load cases (the '_hot' cases use "
+                                      "mech_temperature); interference is defined at mech_ref_temperature")
+
     # ------------------------------------------------------------------------------------
     def __post_init__(self):
         self._derive_sleeve()
@@ -402,6 +440,25 @@ class Params:
     @property
     def is_bridgeless(self) -> bool:
         return self.topology == "sleeved_bridgeless"
+
+    @property
+    def mech_case_list(self) -> tuple[str, ...]:
+        """The load cases of ``mech_cases`` in the order given (() = the single default case)."""
+        return parse_mech_cases(self.mech_cases)
+
+    def case_speed_temperature(self, case: str) -> tuple[float, float]:
+        """(speed in rpm, temperature in degC) of a load case of :data:`MECH_CASES`."""
+        if case not in MECH_CASES:
+            raise ValueError(f"unknown load case {case!r}; allowed: {', '.join(MECH_CASES)}")
+        speed, temp = case.split("_")
+        rpm = {"standstill": 0.0, "rated": self.mech_rpm, "overspeed": self.overspeed_factor * self.mech_rpm}[speed]
+        return rpm, (self.mech_temperature if temp == "hot" else self.mech_temperature_cold)
+
+    def for_case(self, case: str) -> Params:
+        """Single-case parameters of one load case: ``mech_rpm`` and ``mech_temperature`` set to the
+        case's speed and temperature, ``mech_cases`` cleared."""
+        rpm, temp = self.case_speed_temperature(case)
+        return self.replace(mech_cases="", mech_rpm=rpm, mech_temperature=temp)
 
     # validation ---------------------------------------------------------------------------
     def validate(self) -> None:
@@ -504,7 +561,13 @@ class Params:
                 if not CTE_RANGE[0] <= getattr(self, n) <= CTE_RANGE[1]:
                     err.append(f"{n} must be in [{CTE_RANGE[0]:g}, {CTE_RANGE[1]:g}] 1/K (a value in "
                                f"1e-6/K entered without the factor?), got {getattr(self, n)}")
-            for n in ("mech_temperature", "mech_ref_temperature"):
+            try:
+                parse_mech_cases(self.mech_cases)
+            except ValueError as e:
+                err.append(str(e))
+            if self.overspeed_factor < 1.0:
+                err.append(f"overspeed_factor must be >= 1, got {self.overspeed_factor}")
+            for n in ("mech_temperature", "mech_ref_temperature", "mech_temperature_cold"):
                 if not TEMPERATURE_RANGE[0] < getattr(self, n) <= TEMPERATURE_RANGE[1]:
                     err.append(f"{n} must be in ({TEMPERATURE_RANGE[0]:g}, {TEMPERATURE_RANGE[1]:g}] degC, "
                                f"got {getattr(self, n)}")
@@ -571,6 +634,8 @@ def coerce(name: str, value: Any) -> Any:
         return int(fv)
     if isinstance(default, float):
         return float(value)
+    if name == "mech_cases" and isinstance(value, (list, tuple)):
+        return ",".join(str(v) for v in value)   # TOML [base] may give the cases as an array
     return str(value)
 
 

@@ -25,7 +25,8 @@ SPEC_FIELDS = ("sleeve_fibre", "sleeve_matrix", "sleeve_vf", "sleeve_micromechan
 STRENGTH_FIELDS = ("sleeve_Xt", "sleeve_Xc", "sleeve_Yt", "sleeve_Yc", "sleeve_S")
 THERMAL_FIELDS = ("lam_cte", "pm_cte", "sleeve_cte_hoop", "sleeve_cte_radial", "sleeve_cte_axial",
                   "mech_temperature", "mech_ref_temperature")
-NEW_FIELDS = THERMAL_FIELDS + SPEC_FIELDS + STRENGTH_FIELDS
+LOAD_CASE_FIELDS = ("mech_cases", "overspeed_factor", "mech_temperature_cold")   # tests/test_load_cases.py
+NEW_FIELDS = THERMAL_FIELDS + SPEC_FIELDS + STRENGTH_FIELDS + LOAD_CASE_FIELDS
 
 
 # ---- 1. cache key ------------------------------------------------------------------------------
