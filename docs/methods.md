@@ -284,8 +284,8 @@ The deck is plain APDL, written by Python, run in batch, and post-processed into
      (validation.md section 7).
    No pre-stress, no adhesive stiffness of its own.
 6. **Load:** centrifugal load at `mech_rpm` about the shaft axis, together with the
-   interference, in one load step. No thermal load, no shaft (the lamination bore is
-   traction free), no electromagnetic forces.
+   interference and, optionally, a uniform temperature (section 4.3), in one load step. No
+   shaft (the lamination bore is traction free), no electromagnetic forces.
 7. **Outputs** (MPa, nodal von Mises averaged within each body):
    * `svm_lam_max`, the headline lamination stress, is the peak over **named load-carrying
      sections** (`sipm.geometry.locations`). The global peak of these rotors sits at sharp
@@ -313,10 +313,110 @@ The deck is plain APDL, written by Python, run in batch, and post-processed into
    * `svm_lam_max_all` (all lamination nodes, with its location) and `svm_pm_max` (magnets)
      include the sharp corners and the edges of the magnet-pocket contact. They grow with
      refinement and are reported for information only;
-   * `sh_sleeve_max` (hoop stress in the sleeve), `sr_sleeve_min`, the contact pressure
-     range and the location of the lamination peak.
+   * `sh_sleeve_max` (hoop stress in the sleeve), `sr_sleeve_min` (most compressive radial
+     stress), `sr_sleeve_max` (largest radial stress: radial tension drives delamination),
+     `tau_sleeve_max` (largest |r-theta shear|), the contact pressure range and the location
+     of the lamination peak. Sleeve stresses are nodal averages in the cylindrical system;
+     the per-node values (r, theta, radial, hoop, axial, r-theta shear) are written to
+     `sipm_sleeve_nodes.txt` and returned to the caller of `solve_mech` as
+     `r["_sleeve_nodes"]` (not cached by the sweep);
+   * the sleeve failure indices and safety factor of section 4.4.
 
-## 4. Sleeve constants and Table II
+## 4. Composite sleeve model
+
+The sleeve is one cylindrically orthotropic body (section 3, item 3). Its thirteen constants
+(nine elastic constants, density, three thermal expansion coefficients) are either entered
+directly, as the paper's Table II gives them (the default, section 4.5), or derived from a
+composite specification by `sipm.composite` (`sleeve_fibre` set). Every preset in
+`sipm.composite` (`FIBRES`, `MATRICES`, `STRENGTHS`) is an illustrative, class-typical round
+number for a fibre or matrix class, not the datasheet of a commercial grade.
+
+### 4.1 Micromechanics
+
+`lamina(fibre, matrix, vf, model)` gives the unidirectional ply (1 = fibre, 2 = transverse in
+the winding surface, 3 = through the thickness; transversely isotropic, so E3 = E2,
+nu13 = nu12, G13 = G12, nu23 = E2/(2 G23) - 1). E1, nu12 and the density follow the rule of
+mixtures in every model. `sleeve_micromechanics` selects the transverse and shear constants:
+
+* `chamis` (default): Chamis' simplified micromechanics equations, M = Mm / (1 - sqrt(vf)
+  (1 - Mm/Mf)) for E2, G12 and G23 (C.C. Chamis, SAMPE Quarterly 15(3):14-23, 1984; NASA
+  TM-83320, 1983);
+* `halpin_tsai`: the Halpin-Tsai equations with xi = 2 for E2 and xi = 1 for G12 and G23
+  (J.C. Halpin, J.L. Kardos, Polym. Eng. Sci. 16(5):344-352, 1976; xi = 1 for G23 is a choice,
+  Halpin-Tsai has no canonical value there);
+* `rom`: the series (Reuss) rule, a lower bound.
+
+The thermal expansion coefficients follow Schapery's energy bounds for a transversely
+isotropic fibre (R.A. Schapery, J. Compos. Mater. 2(3):380-404, 1968). The fibre direction of
+carbon/epoxy expands very little (slightly negative for the fibre alone), the transverse
+directions are matrix-dominated.
+
+### 4.2 Winding angle
+
+`sleeve_wind_angle` is the angle of a balanced +/- angle-ply winding, measured from the hoop
+direction in the hoop-axial surface (0 = hoop winding). `angle_ply` rotates the ply's 3D
+stiffness about the radial axis by +theta and -theta and homogenises the two plies as a
+layered medium: in-plane strains (hoop, axial, hoop-axial) and out-of-plane stresses
+(radial and the two transverse shears) are common to the plies, the other components are
+thickness averages (C.T. Sun, S. Li, J. Compos. Mater. 22:629-639, 1988). For a balanced
+winding the result is orthotropic in the cylinder axes, so the deck needs no change. Its
+Poisson ratios can lie outside [0, 0.5) (near +/-30 deg nu_hoop_axial exceeds 1 and
+nu_hoop_radial is negative), which is physical for a laminate. Parameter validation therefore
+checks that the full 6x6 sleeve compliance is symmetric positive definite, not each ratio;
+this is also what MAPDL requires of orthotropic MP data (it stops with "the stress-strain
+matrix of material 3 is not positive definite" otherwise, and it solves a +/-30 deg set; see
+validation.md section 10). With a non-zero angle the spec is required: the ply cannot be
+recovered from homogenised constants, and the failure evaluation needs the ply.
+
+With `sleeve_fibre` set, the thirteen constants are derived whenever the parameters are
+created or replaced and overwrite any values passed for them. `sipm composite --fibre
+carbon_sm --vf 0.55 --angle 30` prints them (with `--toml`, the lines for a sweep), and
+`examples/06_composite_sleeve.py` tabulates them against vf and angle.
+
+### 4.3 Thermal load case
+
+`mech_temperature` is a uniform temperature of the whole rotor, `mech_ref_temperature` the
+temperature at which the parts have their stress-free fitted dimensions: the interference
+is defined at the reference temperature. In the deck this is `TREF` = reference and
+`BFUNIF,TEMP` = rotor temperature, with secant expansion coefficients `MP,ALPX/ALPY/ALPZ` for
+lamination, magnets (one isotropic value, `pm_cte`; sintered NdFeB is really anisotropic) and
+the sleeve in its element axes (x radial, y hoop, z axial). The thermal commands are written
+only when the two temperatures differ, so the isothermal default deck solves exactly as
+before. Because the steel grows and the fibre direction hardly does, heating adds
+interference: at 100 K above the fitting temperature the steel OD grows by about 0.085 mm,
+comparable with the default 0.1 mm interference (validation.md sections 1, 2 and 10). The
+closed form in `sipm.analytic` carries the matching thermal particular term (module
+docstring) and validates the FE path. Non-uniform temperature, temperature-dependent matrix
+properties and cure residual stresses are not modelled.
+
+### 4.4 Failure evaluation
+
+`solve_mech` evaluates ply failure criteria in Python from the sleeve node arrays
+(`sipm.composite.sleeve_failure`, `sipm.mapdl.sleeve_failure_outputs`). The nodal stresses are
+the homogenised sleeve stress (radial, hoop, axial; r-theta shear). With a composite spec
+they are split into the +theta and -theta ply stresses (`Laminate.ply_stresses`, including
+the ply-to-ply thermal mismatch for the temperature change); with directly entered constants
+the sleeve is one hoop-wound ply (fibre = hoop). In a hoop ply the in-plane transverse axis 2
+is axial and axis 3 is radial, while the 2D model's plane is hoop-radial, so the plane-stress
+criteria are evaluated on both transverse planes, (s11, s22, t12) and (s11, s33, t13), with
+the same strengths, and the worse is reported. This relies on the ply's transverse isotropy;
+it ignores t23 and the interaction of s22 with s33, i.e. it is not a 3D criterion. The
+criteria (`sipm.composite.failure_indices`): maximum stress; Tsai-Wu with F12* = -1/2
+(S.W. Tsai, E.M. Wu, J. Compos. Mater. 5:58-80, 1971); Hashin's plane-stress fibre and matrix
+modes (Z. Hashin, J. Appl. Mech. 47:329-334, 1980), with the transverse shear strength of the
+matrix-compression mode taken equal to `sleeve_S`. Outputs: `sleeve_fi_max_stress`,
+`sleeve_fi_tsai_wu`, `sleeve_fi_hashin_fibre`, `sleeve_fi_hashin_matrix` (maximum over the
+sleeve corner nodes, >= 1 = failure) and `sleeve_sf`, the minimum Tsai-Wu strength ratio
+(the factor on the whole stress state that reaches the envelope) with its location
+`sleeve_sf_r`, `sleeve_sf_theta`. `sleeve_fi_tsai_wu` is 1 / `sleeve_sf`, not the Tsai-Wu
+quadratic itself: the quadratic has linear terms and can be negative under a
+compression-dominated state, while the reciprocal strength ratio is linear in the load, never
+negative and reaches 1 on the envelope like the other indices.
+The default strengths (`sleeve_Xt` ... `sleeve_S`) are the illustrative carbon_sm/epoxy class
+values at vf about 0.6; they are not scaled with `sleeve_vf`. Cure residual stresses, edge
+and end effects, delamination growth and creep are outside the model.
+
+### 4.5 Table II and the default constants
 
 Table II of the paper lists the sleeve moduli as "125 (radial) / 8.8 (tangential)" GPa
 and the Poisson ratios as "0.28 (radial) / 0.015 (tangential)". For a hoop-wound
@@ -338,6 +438,15 @@ matrix is symmetric; the tabulated 0.015 corresponds to a modulus ratio of about
 instead of 0.070. Users who read Table II differently can set the parameters directly
 (for example `sleeve_E_hoop=8.8, sleeve_E_radial=125`); the validation in
 [validation.md](validation.md) confirms which local direction each constant acts in.
+
+The composite model reproduces Table II closely. With the carbon_sm fibre class in epoxy
+and Chamis micromechanics, E1 reaches 125 GPa at vf = 0.536, where E2 = 7.98 GPa (Table II:
+8.8) and nu12 = 0.270 (0.28). The density there is 1522 kg/m3, against 1800 kg/m3 in
+Table II, which looks like a bare-fibre value rather than that of the composite. The
+default keeps the published 1800 kg/m3; the composite spec gives the rule-of-mixtures
+density. At the default rotor point the two constant sets give the headline and sleeve
+stresses within 1.5 % and the minimum contact pressure within 7 % (validation.md
+section 10).
 
 ## 5. Sweep runner and post-processing
 

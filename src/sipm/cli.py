@@ -8,6 +8,7 @@
     sipm geometry   [--topology T] [--set k=v ...] --out FILE.png
     sipm deck       [--topology T] [--set k=v ...] --out FILE.inp
     sipm validate   ring|mesh|open-circuit [...]
+    sipm composite  --fibre F [--matrix M] [--vf V] [--angle DEG] [--model chamis|halpin_tsai|rom] [--toml]
 
 A sweep configuration (TOML):
 
@@ -97,6 +98,37 @@ def _parse_sets(items):
     return out
 
 
+def _composite(a) -> int:
+    """`sipm composite`: derived sleeve constants (through Params, so exactly what a sweep uses)."""
+    import dataclasses
+
+    from .composite import FIBRES, SLEEVE_KEYS
+    from .params import Params, default_params
+
+    spec = dict(sleeve_fibre=a.fibre, sleeve_matrix=a.matrix, sleeve_vf=a.vf, sleeve_micromechanics=a.model,
+                sleeve_wind_angle=a.angle)
+    if a.fibre not in FIBRES:
+        raise SystemExit(f"sipm composite: --fibre must be one of {tuple(FIBRES)}, got {a.fibre!r}")
+    try:
+        p = default_params("sleeved_bridged", **spec)
+    except ValueError as e:
+        raise SystemExit(f"sipm composite: {e}") from None
+    units = {f.name: f.metadata.get("unit", "") for f in dataclasses.fields(Params)}
+    print(f"{a.fibre} / {a.matrix}, vf = {a.vf:g}, +/-{a.angle:g} deg from hoop, {a.model} micromechanics")
+    for k in SLEEVE_KEYS:
+        print(f"  {k:<24s} = {getattr(p, k):.6g} {units[k]}")
+    if a.toml:
+        print()
+        print("# [base] lines: composite spec (sipm derives the sleeve constants from it at run time)")
+        for k, v in spec.items():
+            print(f'{k} = "{v}"' if isinstance(v, str) else f"{k} = {v!r}")
+        print("# or the derived constants entered directly (leave sleeve_fibre unset); the failure indices")
+        print("# then treat the sleeve as one hoop-wound ply, which is right only for a 0 deg winding")
+        for k in SLEEVE_KEYS:
+            print(f"# {k} = {getattr(p, k)!r}")
+    return 0
+
+
 def _save_and_close(plot: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
     """Call a :mod:`sipm.post` function (which saves to ``out=``) and close its figure, so
     plotting after every sweep does not accumulate open figures."""
@@ -182,6 +214,13 @@ def main(argv=None) -> int:
         s.add_argument("--topology", default="sleeved_bridged")
         s.add_argument("--set", nargs="*", default=[])
         s.add_argument("--out", required=True)
+    s = sub.add_parser("composite", help="sleeve constants from fibre, matrix, vf and winding angle (no Ansys)")
+    s.add_argument("--fibre", required=True, help="fibre class of sipm.composite.FIBRES")
+    s.add_argument("--matrix", default="epoxy", help="matrix class of sipm.composite.MATRICES")
+    s.add_argument("--vf", type=float, default=0.55, help="fibre volume fraction")
+    s.add_argument("--angle", type=float, default=0.0, help="winding angle from hoop (deg), balanced +/-")
+    s.add_argument("--model", default="chamis", help="micromechanics: chamis, halpin_tsai or rom")
+    s.add_argument("--toml", action="store_true", help="also print the lines for a sweep's [base] table")
     s = sub.add_parser("validate")
     s.add_argument("what", choices=["ring", "mesh", "open-circuit"])
     s.add_argument("--case", default="orthotropic")
@@ -239,6 +278,8 @@ def main(argv=None) -> int:
             for k, v in default_params(a.topology, **_parse_sets(a.set)).to_dict().items():
                 print(f"{k} = {v!r}")
         return 0
+    if a.cmd == "composite":
+        return _composite(a)
     if a.cmd in ("geometry", "deck"):
         from .params import default_params
 

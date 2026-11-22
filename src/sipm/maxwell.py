@@ -42,6 +42,10 @@ MECH_ONLY = {
     "sleeve_nu_radial_axial", "sleeve_G_hoop_radial", "sleeve_G_hoop_axial", "sleeve_G_radial_axial",
     "mech_rpm", "interference", "mu_sleeve", "mu_magnet", "plane", "mech_mesh", "mech_mesh_fine",
     "magnet_contact", "stress_corner_margin",
+    "lam_cte", "pm_cte", "sleeve_cte_hoop", "sleeve_cte_radial", "sleeve_cte_axial", "mech_temperature",
+    "mech_ref_temperature",
+    "sleeve_fibre", "sleeve_matrix", "sleeve_vf", "sleeve_micromechanics", "sleeve_wind_angle",
+    "sleeve_Xt", "sleeve_Xc", "sleeve_Yt", "sleeve_Yc", "sleeve_S",
 }
 EM_VARIABLES = {"gamma", "current_rms"}
 

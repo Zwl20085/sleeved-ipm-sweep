@@ -78,6 +78,17 @@ LABELS = {
     "svm_lam_max_all": "Max von Mises, whole lamination, mesh-dependent (MPa)",
     "svm_pm_max": "Max von Mises, PM (MPa)",
     "sh_sleeve_max": "Max hoop stress, sleeve (MPa)",
+    "sr_sleeve_min": "Min radial stress, sleeve (MPa)",
+    "sr_sleeve_max": "Max radial tension, sleeve (MPa)",
+    "tau_sleeve_max": "Max radial-hoop shear, sleeve (MPa)",
+    "mech_temperature": "Rotor temperature (°C)",
+    "sleeve_wind_angle": "Sleeve winding angle from hoop (deg)",
+    "sleeve_vf": "Sleeve fibre volume fraction (-)",
+    "sleeve_fi_max_stress": "Max-stress failure index, sleeve (-)",
+    "sleeve_fi_tsai_wu": "Tsai-Wu failure index (1/strength ratio), sleeve (-)",
+    "sleeve_fi_hashin_fibre": "Hashin fibre failure index, sleeve (-)",
+    "sleeve_fi_hashin_matrix": "Hashin matrix failure index, sleeve (-)",
+    "sleeve_sf": "Tsai-Wu strength ratio (safety factor), sleeve (-)",
 }
 
 # Words used for a topology in legends (series names).

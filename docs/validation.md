@@ -55,6 +55,30 @@ The orthotropic case also confirms the material orientation. The sleeve's hoop s
 closed form gives 41.2 MPa and the ring lifts off the disc at speed (zero interface
 pressure), so a mis-oriented element system would not pass this check.
 
+**Thermal: orthotropic ring, whole rotor 100 K above the fitting temperature**
+(`ring_check("thermal")`: the orthotropic case above with `mech_temperature` = 120 degC,
+`mech_ref_temperature` = 20 degC, at which the 0.1 mm interference is defined; default CTEs:
+steel 12e-6 /K, sleeve 0 /K along the fibre (hoop) and 30e-6 /K radially). The closed form
+adds the thermal particular term to `sipm.analytic` (module docstring); it is checked in
+`tests/test_thermal_sleeve.py` against the equilibrium ODE and the constitutive law by finite
+differences, the interface and OD conditions, a numerical boundary-value solution of a free
+heated orthotropic ring, an isotropic free expansion (zero stress) and the k = 1 limit.
+
+| quantity | FE | closed form | error |
+|---|---|---|---|
+| disc max von Mises (MPa) | 65.5003 | 65.4924 | +0.012 % |
+| ring max hoop stress (MPa) | 339.9660 | 340.3190 | -0.104 % |
+| interface pressure, max over contact (MPa) | 6.3048 | 6.3118 | -0.111 % |
+| interface pressure, min over contact (MPa) | 6.3046 | 6.3118 | -0.114 % |
+
+The FE path agrees as closely as in the isothermal cases. Heating by 100 K doubles the
+interface pressure (3.15 to 6.31 MPa) and raises the sleeve hoop stress by 77 % (192.6 to
+340.3 MPa): the steel grows by 12e-6 x 100 x 71.1 = 0.085 mm while the fibre direction does
+not, close to the 0.1 mm fitted interference. The sleeve node export (`sipm_sleeve_nodes.txt`,
+`r["_sleeve_nodes"]`) reproduces the scalar results exactly in all three ring cases; its
+radial tension (at most 0.003 MPa) and r-theta shear (at most 0.5 MPa, 0.15 % of the hoop
+stress) are the discretisation noise of an axisymmetric problem, whose exact values are zero.
+
 ## 2. IPM rotor stress, one point per topology (20000 rpm, default mesh)
 
 Topology defaults (saved states of the Maxwell models): sleeved bridge-retained with a 1.5 mm
@@ -66,6 +90,15 @@ contact, bonded magnets (the designed 0.1 mm clearance bridged by the bond). Int
 |---|---|---|---|---|---|---|---|---|
 | sleeved_bridged | 253.3 | `qhole`, 54.42 mm, 22.35 deg | 691.1, 61.15 mm, 2.06 deg | 199.6 | 223.9 | 0 % | 25 160 | 22.7 s |
 | sleeved_bridgeless | 318.1 | `qhole`, 54.42 mm, 22.35 deg | 502.6, 60.33 mm, 1.23 deg | 220.9 | 236.6 | 0 % | 21 932 | 20.2 s |
+
+These numbers were re-run after the thermal load case and the sleeve node export were added:
+with the default (equal) temperatures the deck writes no thermal commands and every result
+above is bit-identical. The new sleeve columns at these points: max radial tension
+`sr_sleeve_max` 0.02 MPa (bridge-retained) and 0.23 MPa (bridgeless), max |r-theta shear|
+`tau_sleeve_max` 1.6 and 6.0 MPa. With the bridge-retained rotor 100 K above the fitting
+temperature (default CTEs) the sleeve hoop stress rises from 223.9 to 356.6 MPa, the headline
+`svm_lam_max` from 253.3 to 274.3 MPa and the peak contact pressure from 4.57 to 8.42 MPa
+(`test_mech_point_thermal`).
 
 Section peaks (MPa): bridge-retained `bridge1` 103.9, `bridge2` 97.9, `rib1` 13.0, `web2` 76.4,
 `qhole` 253.3; bridgeless `lip1_pole` 6.3, `lip1_q` 3.9, `lip2_pole` 3.3, `lip2_q` 3.5, `qhole`
@@ -316,3 +349,70 @@ Kac tends to 1 at low speed, as it should. The average torque of these solid-con
 matched the stranded torque run at the same angle of that geometry, a consistency check of the
 excitation. The high values at speed came from that illustrative winding: seven unsegmented
 2.6 mm tall conductors per slot, with a 1.8 mm skin depth in copper at 1333 Hz.
+
+## 10. Composite sleeve
+
+**MAPDL and angle-ply constants.** Parameter validation requires a symmetric positive
+definite 6x6 sleeve compliance instead of bounding each Poisson ratio (methods.md section
+4.2). MAPDL checks the same property: a deck with `sleeve_nu_hoop_radial` = 4 (forced past the
+validation) stops with "The stress-strain matrix of material 3 is not positive definite,
+which is required for real materials", while a +/-30 deg carbon_sm/epoxy winding
+(`nu_hoop_axial` = 1.46, `nu_hoop_radial` = -0.13) solves, with no material warning in the
+output of the disc + ring model; all points below (up to +/-45 deg) solve as well.
+
+**Composite spec against the Table II constants** (bridge-retained rotor, defaults otherwise;
+carbon_sm/epoxy, Chamis, vf = 0.536, hoop winding: E_hoop 124.9, E_radial 7.98 GPa,
+nu 0.270, 1522 kg/m3 against Table II's 125, 8.8 GPa, 0.28, 1800 kg/m3; methods.md
+section 4.5):
+
+| quantity | Table II constants | composite spec | difference |
+|---|---|---|---|
+| headline `svm_lam_max` (`qhole`) (MPa) | 253.28 | 252.51 | -0.30 % |
+| `bridge1` / `bridge2` (MPa) | 103.91 / 97.88 | 104.73 / 98.75 | +0.8 % / +0.9 % |
+| `rib1` / `web2` (MPa) | 12.96 / 76.40 | 12.77 / 76.03 | -1.4 % / -0.5 % |
+| magnet peak (MPa) | 199.60 | 199.05 | -0.27 % |
+| max sleeve hoop (MPa) | 223.92 | 222.99 | -0.41 % |
+| min sleeve radial (MPa) | -4.63 | -4.68 | +1.1 % |
+| contact pressure max / min (MPa) | 4.57 / 2.58 | 4.62 / 2.75 | +1.1 % / +6.8 % |
+| max-stress index / Tsai-Wu safety factor | 0.112 / 8.92 | 0.111 / 8.94 | -0.4 % / +0.2 % |
+| Tsai-Wu index `sleeve_fi_tsai_wu` (= 1 / safety factor) | 0.1122 | 0.1119 | -0.2 % |
+
+The lower density of the composite spec (centrifugal load on the sleeve -15 %) and its lower
+transverse stiffness move the results by about 1 %, the minimum contact pressure by 7 %. At
+the default point (Table II constants, isothermal) the sleeve failure columns are: maximum
+stress index 0.112 (hoop stress against Xt = 2000 MPa), Hashin fibre 0.0125, Hashin matrix
+1.7e-5, Tsai-Wu safety factor 8.92 at the sleeve bore on the d-axis (r = 71.1 mm,
+theta = 0) and Tsai-Wu index 1/8.92 = 0.112. The column is the reciprocal strength ratio,
+not the Tsai-Wu quadratic, which is negative at this point (-0.050) because compression of
+the matrix directions dominates its linear terms.
+
+**Sweep `examples/configs/mech_composite_sleeve.toml`** (bridge-retained rotor, 20000 rpm,
+0.1 mm interference fitted at 20 degC, carbon_sm/epoxy, vf = 0.55, Chamis; all 8 points
+converged, 12.5-20.5 s each; stresses in MPa):
+
+| winding (deg) | rotor (degC) | `svm_lam_max` | max sleeve hoop | min / max sleeve radial | max \|tau_rt\| | contact p min / max | open sleeve contact | max-stress index | Hashin fibre / matrix | Tsai-Wu safety factor (r mm, theta deg); the Tsai-Wu index is its reciprocal |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 20 | 251.8 | 228.5 | -4.83 / 0.02 | 1.54 | 2.81 / 4.76 | 0 | 0.114 | 0.013 / 1.8e-5 | 8.72 (71.1, 0) |
+| 0 | 120 | 272.6 | 364.1 | -8.64 / 0.04 | 2.49 | 5.26 / 8.57 | 0 | 0.182 | 0.033 / 4.3e-5 | 5.49 (72.6, 22.5) |
+| 15 | 20 | 257.1 | 186.7 | -3.80 / 0.02 | 1.30 | 2.15 / 3.77 | 0 | 0.105 | 0.021 / 1.1e-5 | 7.12 (71.1, 0) |
+| 15 | 120 | 278.1 | 318.9 | -7.49 / 0.03 | 2.06 | 4.60 / 7.43 | 0 | 0.170 | 0.034 / 2.5e-5 | 4.47 (72.6, 22.5) |
+| 30 | 20 | 270.7 | 77.8 | -1.32 / 0.01 | 0.68 | 0.16 / 1.32 | 0 | 0.228 | 0.054 / 1.6e-6 | 5.24 (71.1, 0) |
+| 30 | 120 | 299.7 | 145.5 | -3.11 / 0.02 | 0.91 | 1.46 / 3.08 | 0 | 0.275 | 0.084 / 2.5e-6 | 3.28 (72.6, 21.3) |
+| 45 | 20 | 275.8 | 46.1 | -0.82 / 4.86 | 1.76 | 0 / 0.76 | 0.857 | 0.330 | 0.109 / 0.117 | 2.77 (71.1, 18.9) |
+| 45 | 120 | 313.2 | 38.2 | -0.41 / 0.79 | 0.47 | 0 / 0.37 | 0.518 | 0.273 | 0.076 / 2.5e-4 | 4.17 (72.6, 12.8) |
+
+* Winding away from the hoop direction softens the sleeve in hoop (E_hoop 128, 103, 42 and
+  14 GPa at 0, 15, 30 and 45 deg), so it carries less hoop stress and presses less on the
+  lamination; the lamination stress rises (251.8 to 275.8 MPa cold). At 45 deg the sleeve
+  lifts off over most of the contact at speed (86 % open); the sleeve then carries radial
+  tension (up to 4.9 MPa) and its Hashin matrix index rises to 0.12.
+* Heating by 100 K raises the sleeve hoop stress and the contact pressure in the hoop and
+  15-30 deg windings, because the steel expands more than the sleeve in hoop (sleeve hoop CTE
+  0.24, -1.9 and -5.5e-6 /K against 12e-6 /K). At 45 deg the sleeve hoop CTE (3.2e-6 /K) is
+  still below the steel's: heating closes part of the gap (open fraction 86 % to 52 %).
+* The ply failure indices stay well below 1 at every point. The safety factor falls from 8.7
+  (hoop, cold) to 2.8 (45 deg, cold) and 3.3 (30 deg, hot). In the angle plies the
+  fibre-direction stress is no longer the hoop stress, so the max-stress index rises with the
+  angle although the homogenised hoop stress falls.
+* The +/-theta plies of the hot points carry the ply-to-ply thermal mismatch as well
+  (methods.md section 4.4); cure residual stress is not included.

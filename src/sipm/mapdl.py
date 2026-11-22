@@ -22,6 +22,10 @@ Model (see docs/methods.md for the full list of assumptions):
   clearance start open, contact stabilisation damping keeps the loose magnets from drifting
   (not supported for the bridgeless rotor);
 * lamination bore traction-free (no shaft modelled); units mm, t, s, N, MPa;
+* optional uniform temperature ``mech_temperature`` against the fitted reference
+  ``mech_ref_temperature`` (thermal expansion of all three materials, the sleeve's in its
+  element axes); the thermal commands are written only when the two differ, so an
+  isothermal deck solves exactly as without them;
 * headline lamination stress: the peak von Mises stress over named load-carrying sections
   (:mod:`sipm.geometry.locations`), read from a nodal dump of the lamination; the global
   lamination maximum is kept as a secondary, mesh-dependent quantity.
@@ -45,6 +49,11 @@ from .params import Params
 
 RESULTS_FILE = "sipm_results.txt"
 NODES_FILE = "sipm_lam_nodes.txt"   # lamination nodes: x, y, von Mises (named sections)
+SLEEVE_FILE = "sipm_sleeve_nodes.txt"   # sleeve corner nodes: r, theta, stresses in RSYS 11
+# columns of SLEEVE_FILE and keys of parse_sleeve_nodes(): r (mm), theta (deg, pole frame) and
+# the nodal-averaged stresses (MPa) in the cylindrical system: SX radial, SY hoop, SZ axial,
+# SXY radial-hoop shear
+SLEEVE_COLUMNS = ("r", "theta", "s_radial", "s_hoop", "s_axial", "s_shear")
 UNSUPPORTED_FRICTIONAL = (
     "magnet_contact='frictional' is not supported for sleeved_bridgeless: the loose magnets in "
     "open-clearance contact do not converge reliably in that rotor (docs/validation.md); use "
@@ -177,6 +186,23 @@ def write_deck(p: Params, model: MechModel, path: str | Path, results_file: str 
         a(f"MP,GYZ,{MAT_SLV},{_num(p.sleeve_G_hoop_axial * 1e3)}")
         a(f"MP,GXZ,{MAT_SLV},{_num(p.sleeve_G_radial_axial * 1e3)}")
         a(f"MP,DENS,{MAT_SLV},{_num(p.sleeve_density * 1e-12)}")
+    thermal = p.mech_delta_t != 0.0
+    if thermal:
+        # secant CTEs about TREF = the temperature of the stress-free fitted dimensions (where the
+        # interference is defined); the sleeve's in its element system (x radial, y hoop, z axial)
+        a(f"! thermal load: uniform {_num(p.mech_temperature)} degC, reference {_num(p.mech_ref_temperature)} degC")
+        a(f"TREF,{_num(p.mech_ref_temperature)}")
+        for mat, ax, ay, az in ((MAT_LAM, p.lam_cte, p.lam_cte, p.lam_cte),
+                                (MAT_PM, p.pm_cte, p.pm_cte, p.pm_cte)):
+            a(f"MP,ALPX,{mat},{_num(ax)}")
+            a(f"MP,ALPY,{mat},{_num(ay)}")
+            a(f"MP,ALPZ,{mat},{_num(az)}")
+        if model.sleeve is not None:
+            a(f"MP,ALPX,{MAT_SLV},{_num(p.sleeve_cte_radial)}")
+            a(f"MP,ALPY,{MAT_SLV},{_num(p.sleeve_cte_hoop)}")
+            a(f"MP,ALPZ,{MAT_SLV},{_num(p.sleeve_cte_axial)}")
+    else:
+        a("! isothermal (mech_temperature = mech_ref_temperature): no thermal expansion")
     a("LOCAL,11,1,0,0,0")
     a("CSYS,0")
     # geometry ----------------------------------------------------------------------------
@@ -314,6 +340,8 @@ def write_deck(p: Params, model: MechModel, path: str | Path, results_file: str 
     a("ANTYPE,STATIC")
     a("NLGEOM,OFF")
     a("OMEGA,0,0,OMG")
+    if thermal:
+        a(f"BFUNIF,TEMP,{_num(p.mech_temperature)}")
     a("AUTOTS,ON")
     a("NSUBST,10,200,5")
     a("OUTRES,ALL,LAST")
@@ -361,6 +389,28 @@ def write_deck(p: Params, model: MechModel, path: str | Path, results_file: str 
         nsort_get(MAT_SLV, "Y", "MAX", "SH_SLV", rsys=11)
         nsort_get(MAT_SLV, "X", "MIN", "SR_SLV", rsys=11)
         nsort_get(MAT_SLV, "EQV", "MAX", "SVM_SLV")
+        nsort_get(MAT_SLV, "X", "MAX", "SRT_SLV", rsys=11)      # max radial tension (delamination)
+        nsort_get(MAT_SLV, "XY", "MAX", "TAU_SLV_HI", rsys=11)  # r-theta shear, both signs
+        nsort_get(MAT_SLV, "XY", "MIN", "TAU_SLV_LO", rsys=11)
+        # sleeve corner nodes: r, theta (deg) and stresses in the cylindrical system 11
+        a(f"ESEL,S,MAT,,{MAT_SLV}")
+        a("NSLE,S,CORNER")
+        a("RSYS,11")
+        a("CSYS,11")
+        a("*GET,SNMX,NODE,0,NUM,MAXD")
+        for arr in ("SMSK", "SRA", "STA", "SSX", "SSY", "SSZ", "SSXY"):
+            a(f"*DIM,{arr},ARRAY,SNMX")
+        a("*VGET,SMSK(1),NODE,1,NSEL")
+        a("*VGET,SRA(1),NODE,1,LOC,X")
+        a("*VGET,STA(1),NODE,1,LOC,Y")
+        for arr, comp in (("SSX", "X"), ("SSY", "Y"), ("SSZ", "Z"), ("SSXY", "XY")):
+            a(f"*VGET,{arr}(1),NODE,1,S,{comp}")
+        a(f"*CFOPEN,{Path(SLEEVE_FILE).stem},{Path(SLEEVE_FILE).suffix.lstrip('.')}")
+        a("*VMASK,SMSK(1)")
+        a("*VWRITE,SRA(1),STA(1),SSX(1),SSY(1),SSZ(1),SSXY(1)")
+        a("(6E21.12)")
+        a("*CFCLOS")
+        a("CSYS,0")
         nsort_get(MAT_LAM, "X", "MIN", "SR_LAM", rsys=11)
         a("RSYS,0")
         a("ESEL,S,TYPE,,10")
@@ -417,6 +467,43 @@ def parse_results(path: str | Path) -> dict:
     return out
 
 
+def parse_sleeve_nodes(path: str | Path) -> dict[str, np.ndarray]:
+    """Read the sleeve node file written by the deck: one 1-D array per :data:`SLEEVE_COLUMNS`
+    entry (r in mm, theta in deg, stresses in MPa in the cylindrical system)."""
+    data = np.loadtxt(path, ndmin=2)
+    if data.shape[1] != len(SLEEVE_COLUMNS):
+        raise ValueError(f"{path}: expected {len(SLEEVE_COLUMNS)} columns, got {data.shape[1]}")
+    return {name: data[:, i].copy() for i, name in enumerate(SLEEVE_COLUMNS)}
+
+
+def sleeve_failure_outputs(p: Params, nodes: dict[str, np.ndarray]) -> dict:
+    """Sleeve failure columns from the sleeve node arrays (:func:`parse_sleeve_nodes`).
+
+    The nodal stresses are taken as the homogenised sleeve stress (hoop, axial, radial, 0, r-theta
+    shear, 0) and evaluated by :func:`sipm.composite.sleeve_failure` with the ply strengths of ``p``:
+    with a composite spec in its +/- angle plies (thermal mismatch for ``mech_delta_t``
+    included), with directly entered constants as one hoop-wound ply. Returns the maximum over the
+    nodes of each failure index (``sleeve_fi_<criterion>``), the minimum Tsai-Wu strength ratio
+    ``sleeve_sf`` and the location of that node (``sleeve_sf_r`` mm, ``sleeve_sf_theta`` deg).
+    ``sleeve_fi_tsai_wu`` is 1 / ``sleeve_sf`` (the reciprocal Tsai-Wu strength ratio, maximum over
+    the nodes), not the raw quadratic of :func:`sipm.composite.failure_indices`.
+    """
+    from .composite import CRITERIA, sleeve_failure
+
+    n = len(nodes["r"])
+    sig = np.zeros((n, 6))
+    sig[:, 0], sig[:, 1], sig[:, 2], sig[:, 4] = nodes["s_hoop"], nodes["s_axial"], nodes["s_radial"], nodes["s_shear"]
+    fi = sleeve_failure(sig, p.sleeve_strength(), p.sleeve_laminate(), p.mech_delta_t)
+    out = {f"sleeve_fi_{c}": float(np.max(fi[c])) for c in CRITERIA}
+    i = int(np.argmin(fi["tsai_wu_sr"]))
+    sf = float(fi["tsai_wu_sr"][i])
+    # Tsai-Wu column: 1 / strength ratio (linear in load, >= 0, 1 on the envelope), not the raw
+    # quadratic, whose linear terms make it negative under compression-dominated states
+    out["sleeve_fi_tsai_wu"] = 1.0 / sf if sf > 0 else math.inf
+    out.update(sleeve_sf=sf, sleeve_sf_r=float(nodes["r"][i]), sleeve_sf_theta=float(nodes["theta"][i]))
+    return out
+
+
 def errors_from_output(path: str | Path, limit: int = 5) -> list[str]:
     """Text of the first *** ERROR *** blocks of a MAPDL output file."""
     p = Path(path)
@@ -445,7 +532,7 @@ def run_deck(deck: Path, workdir: Path, cfg: Config, job: str = "sipm", on_start
     """Run MAPDL in batch on ``deck`` inside ``workdir``; return the results-file path."""
     exe = cfg.resolved_mapdl()
     workdir.mkdir(parents=True, exist_ok=True)
-    for f in (workdir / RESULTS_FILE, workdir / NODES_FILE, workdir / f"{job}.lock"):
+    for f in (workdir / RESULTS_FILE, workdir / NODES_FILE, workdir / SLEEVE_FILE, workdir / f"{job}.lock"):
         if f.exists():
             f.unlink()
     out = workdir / f"{job}.out"
@@ -511,7 +598,21 @@ def solve_mech(p: Params, cfg: Config | None = None, workdir: str | Path | None 
       the outline or at magnet contact edges, which are singular: mesh-dependent.
     * ``svm_pm_max`` - magnet peak (at contact edges, mesh-dependent).
     * ``svm_rotor_max`` - the design quantity used by the plots, = ``svm_lam_max``.
-    * ``sh_sleeve_max`` - max hoop stress in the sleeve.
+    * ``sh_sleeve_max`` - max hoop stress in the sleeve; ``sr_sleeve_min`` its most compressive
+      radial stress.
+    * ``sr_sleeve_max`` - max radial stress in the sleeve (radial tension, the delamination
+      driver; <= 0 when the sleeve is compressed through its thickness everywhere).
+    * ``tau_sleeve_max`` - max absolute radial-hoop shear stress in the sleeve.
+    * ``sleeve_fi_max_stress``, ``sleeve_fi_tsai_wu``, ``sleeve_fi_hashin_fibre``,
+      ``sleeve_fi_hashin_matrix`` - max ply failure index over the sleeve nodes (>= 1 = failure;
+      the Tsai-Wu one is 1 / ``sleeve_sf``, linear in load);
+      ``sleeve_sf`` - min Tsai-Wu strength ratio (safety factor) at ``sleeve_sf_r``,
+      ``sleeve_sf_theta`` (see :func:`sleeve_failure_outputs`).
+
+    Sleeve stresses are nodal averages in the cylindrical system (x radial, y hoop). With a
+    sleeve, ``r["_sleeve_nodes"]`` holds the per-node arrays of :func:`parse_sleeve_nodes`
+    (corner nodes; the file is deleted with the other solver files unless
+    ``cfg.keep_mapdl_files``). Like ``_raw`` it is not written to the sweep cache.
     """
     cfg = cfg or Config()
     t0 = time.time()
@@ -554,6 +655,8 @@ def solve_mech(p: Params, cfg: Config | None = None, workdir: str | Path | None 
     if "sh_slv" in raw:
         r["sh_sleeve_max"] = raw["sh_slv"]
         r["sr_sleeve_min"] = raw["sr_slv"]
+        r["sr_sleeve_max"] = raw["srt_slv"]
+        r["tau_sleeve_max"] = max(abs(raw["tau_slv_hi"]), abs(raw["tau_slv_lo"]))
         r["svm_sleeve_max"] = raw["svm_slv"]
         r["sr_lam_min"] = raw["sr_lam"]
         r["contact_p_max"] = raw["cp_max"]
@@ -566,9 +669,13 @@ def solve_mech(p: Params, cfg: Config | None = None, workdir: str | Path | None 
     r["n_elements"] = int(raw["nelem"])
     r["mech_wall_s"] = time.time() - t0
     r["_raw"] = raw
+    if model.sleeve is not None:
+        r["_sleeve_nodes"] = parse_sleeve_nodes(wd / SLEEVE_FILE)
+        r.update(sleeve_failure_outputs(p, r["_sleeve_nodes"]))
     if not cfg.keep_mapdl_files:
         _cleanup(wd, "sipm")
         (wd / NODES_FILE).unlink(missing_ok=True)
+        (wd / SLEEVE_FILE).unlink(missing_ok=True)
     return r
 
 
@@ -582,4 +689,6 @@ def copy_deck_only(p: Params, path: str | Path) -> Path:
 
 
 __all__ = ["MechModel", "mech_model_from_rotor", "mech_model_ring", "write_deck", "parse_results",
-           "run_deck", "solve_mech", "errors_from_output", "MapdlError", "copy_deck_only"]
+           "parse_sleeve_nodes", "sleeve_failure_outputs", "run_deck", "solve_mech", "errors_from_output",
+           "MapdlError", "copy_deck_only",
+           "SLEEVE_FILE", "SLEEVE_COLUMNS"]

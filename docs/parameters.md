@@ -102,8 +102,25 @@ measure what similar names measured before the rebase:
 | `sleeve_G_hoop_radial` | 4.5 | GPa | illustrative |  | In-plane shear modulus |
 | `sleeve_G_hoop_axial` | 4.5 | GPa | illustrative |  | Shear modulus hoop-axial |
 | `sleeve_G_radial_axial` | 3.1 | GPa | illustrative |  | Transverse shear modulus |
+| `sleeve_fibre` |  | - | illustrative |  | Sleeve fibre class from sipm.composite.FIBRES (carbon_sm, carbon_im, carbon_hm, e_glass), or '' (default) to use the sleeve constants as entered. When set, the thirteen sleeve constants (sleeve_E_*, sleeve_nu_*, sleeve_G_*, sleeve_density, sleeve_cte_*) are DERIVED from fibre, matrix, vf, micromechanics model and winding angle whenever the parameters are created or replaced, overwriting any values passed for them |
+| `sleeve_matrix` | epoxy | - | illustrative |  | Sleeve matrix class from sipm.composite.MATRICES (epoxy, peek); used only with sleeve_fibre |
+| `sleeve_vf` | 0.55 | - | illustrative |  | Sleeve fibre volume fraction, in (0, 1); used only with sleeve_fibre |
+| `sleeve_micromechanics` | chamis | - | illustrative |  | Micromechanics model for the transverse and shear ply constants: chamis, halpin_tsai or rom; used only with sleeve_fibre |
+| `sleeve_wind_angle` | 0.0 | deg | illustrative |  | Winding angle of a balanced +/- angle-ply sleeve, measured from the hoop direction (0 = hoop winding), in [0, 90]. Non-zero needs sleeve_fibre (the ply cannot be recovered from homogenised constants) |
+| `sleeve_Xt` | 2000.0 | MPa | illustrative |  | Sleeve ply strength, fibre-direction tension (default: STRENGTHS['carbon_sm_epoxy'], a class-typical round number) |
+| `sleeve_Xc` | 1200.0 | MPa | illustrative |  | Sleeve ply strength, fibre-direction compression |
+| `sleeve_Yt` | 50.0 | MPa | illustrative |  | Sleeve ply strength, transverse tension |
+| `sleeve_Yc` | 200.0 | MPa | illustrative |  | Sleeve ply strength, transverse compression |
+| `sleeve_S` | 70.0 | MPa | illustrative |  | Sleeve ply shear strength (also used for the transverse shear strength in Hashin's matrix-compression mode) |
+| `lam_cte` | 1.2e-05 | 1/K | illustrative |  | Lamination thermal expansion coefficient (electrical steel, typically 11-13e-6 /K) |
+| `pm_cte` | 2e-06 | 1/K | illustrative |  | PM thermal expansion coefficient, one isotropic value. Sintered NdFeB is strongly anisotropic (about +5e-6 /K along the magnetisation, about -1e-6 /K across it); the default is the mean of the two in-plane directions |
+| `sleeve_cte_hoop` | 0.0 | 1/K | illustrative |  | Sleeve thermal expansion along the fibre (hoop); carbon/epoxy is about zero (typically -1e-6 .. +0.5e-6 /K) |
+| `sleeve_cte_radial` | 3e-05 | 1/K | illustrative |  | Sleeve transverse (radial) thermal expansion, matrix-dominated (typically 25-35e-6 /K for carbon/epoxy) |
+| `sleeve_cte_axial` | 3e-05 | 1/K | illustrative |  | Sleeve axial thermal expansion (transversely isotropic: = radial); enters plane strain only |
 | `mech_rpm` | 20000.0 | rpm | paper |  | Speed for the stress analysis |
 | `interference` | 0.1 | mm | illustrative |  | Radial interference between lamination OD and sleeve bore |
+| `mech_temperature` | 20.0 | degC | illustrative |  | Uniform rotor temperature (lamination, magnets and sleeve) of the stress analysis |
+| `mech_ref_temperature` | 20.0 | degC | illustrative |  | Reference temperature: the temperature at which the parts have their stress-free fitted dimensions, i.e. at which interference is defined. Equal to mech_temperature (default) = isothermal analysis |
 | `mu_sleeve` | 0.0 | - | illustrative |  | Friction coefficient sleeve/lamination |
 | `mu_magnet` | 0.0 | - | illustrative |  | Friction coefficient magnet/pocket |
 | `plane` | stress | - | illustrative |  | 2D assumption: 'stress' or 'strain' |

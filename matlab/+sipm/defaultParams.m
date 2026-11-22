@@ -6,7 +6,9 @@ function s = defaultParams(topology, varargin)
 %
 % Topologies: 'sleeved_bridged', 'sleeved_bridgeless'.
 % The Python side validates the values (an invalid set raises an error).
-% Units: mm, deg, GPa, kg/m^3, rpm, A (see docs/parameters.md).
+% Units: mm, deg, GPa, kg/m^3, rpm, A, degC, 1/K (see docs/parameters.md).
+% The fields are read from the Python package (sipm params --json), so new parameters
+% appear here without changes to this file.
 
 if nargin < 1, topology = 'sleeved_bridged'; end
 sets = '';
