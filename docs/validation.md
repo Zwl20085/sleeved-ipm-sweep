@@ -89,19 +89,23 @@ contact, bonded magnets (the designed 0.1 mm clearance bridged by the bond). Int
 | topology | headline `svm_lam_max` (MPa) | section, location r, theta | global lamination peak (MPa), location | magnet peak (MPa) | max sleeve hoop (MPa) | open sleeve contact | nodes | wall |
 |---|---|---|---|---|---|---|---|---|
 | sleeved_bridged | 253.3 | `qhole`, 54.42 mm, 22.35 deg | 691.1, 61.15 mm, 2.06 deg | 199.6 | 223.9 | 0 % | 25 160 | 22.7 s |
-| sleeved_bridgeless | 318.1 | `qhole`, 54.42 mm, 22.35 deg | 502.6, 60.33 mm, 1.23 deg | 220.9 | 236.6 | 0 % | 21 932 | 20.2 s |
+| sleeved_bridgeless | 318.1 | `qhole`, 54.42 mm, 22.35 deg | 502.6, 60.33 mm, 1.23 deg | 220.9 | 236.5 | 0 % | 21 633 | 16.8 s |
 
 These numbers were re-run after the thermal load case and the sleeve node export were added:
 with the default (equal) temperatures the deck writes no thermal commands and every result
-above is bit-identical. The new sleeve columns at these points: max radial tension
-`sr_sleeve_max` 0.02 MPa (bridge-retained) and 0.23 MPa (bridgeless), max |r-theta shear|
-`tau_sleeve_max` 1.6 and 6.0 MPa. With the bridge-retained rotor 100 K above the fitting
+above is bit-identical. The bridgeless row was re-run once more after its thin sleeve's bore
+arc was sized like the lamination OD (methods.md section 3, item 2): the headline, global and
+magnet peaks moved by less than 0.01 MPa, the sleeve hoop stress from 236.6 to 236.5 MPa, the
+contact pressure min / max from 0.850 / 4.784 to 0.832 / 4.865 MPa, 21 932 to 21 633 nodes. The
+new sleeve columns at these points: max radial tension `sr_sleeve_max` 0.02 MPa
+(bridge-retained) and 0.42 MPa (bridgeless; 0.23 before the bore-arc sizing), max |r-theta
+shear| `tau_sleeve_max` 1.6 and 3.8 MPa (bridgeless 6.0 before). With the bridge-retained rotor 100 K above the fitting
 temperature (default CTEs) the sleeve hoop stress rises from 223.9 to 356.6 MPa, the headline
 `svm_lam_max` from 253.3 to 274.3 MPa and the peak contact pressure from 4.57 to 8.42 MPa
 (`test_mech_point_thermal`).
 
 Section peaks (MPa): bridge-retained `bridge1` 103.9, `bridge2` 97.9, `rib1` 13.0, `web2` 76.4,
-`qhole` 253.3; bridgeless `lip1_pole` 6.3, `lip1_q` 3.9, `lip2_pole` 3.3, `lip2_q` 3.5, `qhole`
+`qhole` 253.3; bridgeless `lip1_pole` 6.7, `lip1_q` 4.0, `lip2_pole` 3.4, `lip2_q` 3.6, `qhole`
 318.1. The headline peak is at the apex fillet of the q-axis lightening hole, on the q-axis,
 in both rotors. The global peaks sit at sharp corners of the slot ends next to the bonded
 magnets (bridge-retained: a corner of the layer-1 inner relief; bridgeless: near the inner
@@ -137,18 +141,21 @@ Defaults, bonded magnets, 0.1 mm interference, 20000 rpm; global / fine element 
 
 | mesh (mm) | nodes | `lip1_pole` | `lip1_q` | `lip2_pole` | `lip2_q` | `qhole` | global lamination peak | magnet peak | max sleeve hoop | wall |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 0.8 / 0.3 | 9 751 | 4.4 | 3.8 | 2.5 | 3.8 | 315.9 | 359.7 | 206.8 | 234.1 | 9 s |
-| 0.5 / 0.15 (default) | 21 932 | 6.3 | 3.9 | 3.3 | 3.5 | 318.1 | 502.6 | 220.9 | 236.6 | 18 s |
-| 0.3 / 0.08 | 56 409 | 8.2 | 4.6 | 4.1 | 4.4 | 321.0 | 614.7 | 282.3 | 238.4 | 41 s |
-| 0.2 / 0.04 | 136 309 | 8.8 | 5.1 | 4.4 | 4.2 | 323.5 | 849.3 | 655.0 | 239.1 | 96 s |
-| change between the two finest | | +8.0 % | +10.8 % | +8.5 % | -3.2 % | +0.8 % | +38 % | +132 % | +0.3 % | |
+| 0.8 / 0.3 | 9 497 | 4.7 | 3.8 | 2.9 | 3.9 | 315.9 | 359.7 | 206.9 | 235.3 | 11 s |
+| 0.5 / 0.15 (default) | 21 633 | 6.7 | 4.0 | 3.4 | 3.6 | 318.1 | 502.6 | 220.9 | 236.5 | 18 s |
+| 0.3 / 0.08 | 56 188 | 8.2 | 4.6 | 4.2 | 4.4 | 321.0 | 614.7 | 282.3 | 237.8 | 40 s |
+| 0.2 / 0.04 | 136 117 | 8.9 | 5.1 | 4.3 | 4.2 | 323.5 | 849.2 | 655.0 | 239.0 | 64 s |
+| change between the two finest | | +7.5 % | +10.4 % | +3.1 % | -4.5 % | +0.8 % | +38 % | +132 % | +0.5 % | |
+
+(bridgeless rows re-run with the bore arc of the thin sleeve sized like the lamination OD,
+methods.md section 3, item 2; the bridge-retained rows are unchanged by it)
 
 (stresses in MPa)
 
 * **Converged (< 3 % between the two finest meshes):** every section of the bridge-retained
   rotor (0.4-1.8 %), the bridgeless `qhole` (0.8 %), the sleeve hoop stress of both rotors,
   and with them the headline `svm_lam_max` of both rotors (`qhole` at every mesh).
-* **Not converged: the four bridgeless lips** (3-11 %). Their peaks lie at the end of the
+* **Not converged: the four bridgeless lips** (3-10 %). Their peaks lie at the end of the
   section next to the lip root, a sharp corner, and keep rising as the mesh resolves its
   field. They are small (below 9 MPa, under 3 % of the headline value), so they do not affect
   `svm_lam_max`, but they are not reliable on their own.
@@ -466,7 +473,7 @@ relative to its standstill pressure):
 |---|---|---|---|---|---|
 | bridge-retained, 20 degC | 39 357, standstill + overspeed | 2.620 | 0.026 (1.0 %), 1 | 0.345, 0 | 2.8e-5 at 20000 rpm, 4.0e-4 at 0.95 x |
 | bridge-retained, 120 degC | 51 553, standstill + overspeed | 5.074 | 0.044 (0.9 %), 1 | 0.590, 0 | |
-| bridgeless, 20 degC | 23 937, standstill + rated (overspeed already open) | 1.126 | 0.340, 1 | 0.400, 1 | 8.7 % at 20000 rpm |
+| bridgeless, 20 degC | 23 591, standstill + rated (overspeed already open) | 1.136 | 0.398, 1 | 0.460, 1 | 6.6 % at 20000 rpm |
 | bridgeless, 120 degC | 0: open at standstill | | | | |
 
 Bridge-retained rotor: the linear model holds. At the extrapolated speed the governing element
@@ -483,16 +490,18 @@ the sleeve and the bonded magnets, and the OD has openings between them (11.39-1
 and 18.9 deg) are partly open: the pieces tilt under load, so the contact zone at each edge
 changes with speed and temperature. Cold, every element is closed at standstill and 20000 rpm and one
 edge element (12.6 deg) is partly open at 24000 rpm; the lines through standstill and 24000 rpm
-miss the pressures of the closed elements at 20000 rpm by up to 8.7 % of their standstill
+miss the pressures of the closed elements at 20000 rpm by up to 6.6 % of their standstill
 pressure, against 3e-5 in the bridge-retained rotor. The extrapolation from standstill and
-20000 rpm gives 23 937 rpm, but that edge element is already open at 0.95 x that speed
-(22 740 rpm): the true first opening lies below it. Hot (120 degC), two edge
-elements (11.2 and 18.9 deg) are already open at standstill, so the extrapolation gives 0 by the
-definition (first point of the interface to open), although those edges close again with speed (at
-20000 rpm hot every element is closed, minimum 1.45 MPa) and the third edge element (12.6 deg)
+20000 rpm gives 23 591 rpm, but that edge element is already open at 0.95 x that speed
+(22 411 rpm): the true first opening lies below it. Hot (120 degC), three edge
+elements (10.8, 11.2 and 18.9 deg) are already open at standstill, so the extrapolation gives 0 by
+the definition (first point of the interface to open), although those edges close again with speed
+(at 20000 rpm hot every element is closed, minimum 1.42 MPa) and the edge element at 12.6 deg
 opens only between 24000 and 42 300 rpm. The pressure is not monotonic in speed here, which no
-two-point line can represent. The bridgeless rows above were computed before this result was
-known; `liftoff_rpm_cold` / `_hot` are now NaN for `sleeved_bridgeless`, with the reason in
+two-point line can represent. The bridgeless rows were re-run after the bore arc of its thin
+sleeve was sized like the lamination OD (methods.md section 3, item 2; before: 23 937 rpm,
+1.126 / 0.340 / 0.400 MPa, 8.7 %, two edge elements open hot at standstill), with the NaN rule
+below bypassed to obtain them; `liftoff_rpm_cold` / `_hot` are now NaN for `sleeved_bridgeless`, with the reason in
 `liftoff_basis_*`. For this rotor read `contact_p_min__<case>` and
 `sleeve_open_fraction__<case>` instead.
 
@@ -500,7 +509,7 @@ known; `liftoff_rpm_cold` / `_hot` are now NaN for `sleeved_bridgeless`, with th
 the middle ones are compared with the two-point lines element by element and the basis is
 flagged above 1 % of the element's standstill pressure. In the six-case point above
 (standstill, rated and overspeed all closed) the rated case deviates by at most 2.8e-5 (cold),
-so no flag is set; the bridgeless rotor's 8.7 % would be flagged.
+so no flag is set; the bridgeless rotor's 6.6 % would be flagged.
 
 ## 12. Layered sleeve and winding prestress
 
@@ -617,6 +626,16 @@ Stresses in MPa, at 20000 rpm unless stated:
   (`sipm winding --tension 100 --set sleeve_fibre=carbon_sm sleeve_layers=0:1,0:1,0:1`) the
   equivalent prestresses are within 2 % of the winding stress, because the solid disc beneath
   is stiff; the slotted rotor gives way more, so the real relaxation is larger.
+
+**Bridgeless rotor** (`test_mech_point_multilayer_bridgeless`): the default 0.5 mm sleeve as
+hoop / +/-20 deg / hoop layers of 0.25 / 0.125 / 0.125 mm (carbon_sm/epoxy, vf 0.55), 0.1 mm
+interference, 50 MPa winding prestress, 20000 rpm, converged with every contact element closed,
+29 464 nodes, 26 s: `svm_lam_max` 316.1 MPa (`qhole`), sleeve hoop max per layer 286.2 / 197.7 /
+291.9 MPa, contact pressure min 1.343 MPa, Tsai-Wu safety factor 4.63 in the helical layer
+(6.98 / 6.85 in the hoop layers), interlaminar shear 3.55 MPa. Without the prestress: 318.5 MPa,
+233.3 / 148.4 / 244.0 MPa, 0.818 MPa, 6.16 (layer 2), 3.26 MPa; one carbon_sm hoop layer for
+comparison: 317.5 MPa, sleeve hoop 241.1 MPa, 1.122 MPa, 8.29. The interlaminar shear is larger
+than on the bridge-retained rotor (1.4 MPa), from the edges of the three loose lamination pieces.
 
 ## 13. Sleeve eddy-current loss (2D, axial current)
 
@@ -735,6 +754,12 @@ total current over the ring:
 | load, sleeve mesh 0.3 mm, zero ring current | 5.0577 | 5.0943 | 0.993 |
 | no load, default mesh, zero ring current | 0.06244 | 0.06398 | 0.976 |
 
+The first row is re-run from the package by `sipm validate sleeve-loss` (`--sigma`, default
+1e4 S/m; `sipm.validation.sleeve_loss_check`, `test_sleeve_loss_check`): the conducting run, then
+the non-conducting model with A_z on the five arcs and the estimate. Re-run: FE 5.0561 W (change
+over the last period 8.1e-6), estimate 5.0923 W, FE / estimate 0.9929; variants 4.6115 W (zero
+current per pole), 4.9115 W (central differences), 4.8085 W (harmonic form), seam mismatch 1.6e-8.
+
 The FE loss and the estimate agree within 1 % at load and 2.4 % at no load (where the loss is
 80 times smaller and made of higher harmonics), for both net-current conditions; the ratio is
 the same for both, so the effect of the per-pole constraint is reproduced. The B_r recovered from
@@ -758,3 +783,9 @@ armature field, the winding harmonics and the slot harmonics of the stator curre
 the stator exchanges no power, so the torque must fall by exactly P / Omega = 1.99e-4 N m; the
 FE gives a mean torque of -1.93e-4 N m (the cogging torque of the non-conducting model averages
 to 0.000 N m, section 5).
+
+**Bridgeless rotor** (`test_em_point_conducting_sleeve_bridgeless`, 0.5 mm sleeve, 1e4 S/m,
+420 A rms, gamma = 130 deg, 3000 rpm): loss 3.352 W (change over the last period 3e-7), torque
+497.6629 to 497.6536 N m, a drop of 0.0093 N m = 0.87 P / Omega, as on the bridge-retained
+rotor; skin depth 205 times the sleeve thickness. The non-conducting torque is that of
+section 6 (497.66 N m).

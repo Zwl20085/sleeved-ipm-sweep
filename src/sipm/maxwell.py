@@ -469,8 +469,11 @@ class MaxwellSession:
                     b_rotor_max=out["Rotor_max"], r_tooth=r_tooth, r_yoke=r_yoke)
 
     def ac_loss(self, p: Params, rpm: float, periods: float = 1.5, steps_per_period: int = 90) -> dict:
-        """Solid-conductor run at ``rpm``: AC copper loss factor of the active part (see methods notes)."""
-        q = p.replace(em_rpm=rpm)
+        """Solid-conductor run at ``rpm``: AC copper loss factor of the active part (see methods notes).
+
+        The sleeve is modelled non-conducting here whatever its conductivity: ``SolidLoss`` sums every
+        solid conductor, so a conducting sleeve would be counted as copper loss in ``kac``."""
+        q = p.replace(em_rpm=rpm, sleeve_sigma_fibre=0.0, sleeve_sigma_transverse=0.0)
         mode = f"acloss|{periods}|{steps_per_period}"
         t0 = time.time()
         if self.key != em_model_key(q, mode):

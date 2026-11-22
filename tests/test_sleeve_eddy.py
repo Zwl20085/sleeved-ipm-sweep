@@ -408,3 +408,36 @@ def test_post_labels():
     for k in ("sleeve_loss_w", "sleeve_loss_frac", "sleeve_sigma_axial", "sleeve_sigma_fibre",
               "sleeve_sigma_transverse"):
         assert k in LABELS
+
+
+def test_sleeve_loss_check_pipeline_fake_session():
+    """`sipm validate sleeve-loss` (validation.sleeve_loss_check): the conducting run at sigma and the
+    non-conducting line export of the same point, compared through sleeve_shell_estimate."""
+    from sipm.validation import sleeve_loss_check, sleeve_shell_estimate
+
+    p = default_params("sleeved_bridged")
+    fe = p.em_rpm * p.pole_pairs / 60
+    om, w, A0 = 2 * np.pi * p.em_rpm / 60, 2 * np.pi * 6 * fe, 1e-3
+    t = np.linspace(0, p.em_span / 360 / fe, round(p.em_span / p.em_step) + 1)
+    phi = np.linspace(0, 2 * np.pi / p.poles, 361)
+    radii = np.linspace(p.r_lam, p.r_sleeve_out, 5) * 1e-3
+    a = np.array([[A0 * np.sin(12 * (phi - om * tk) - w * tk) for tk in t] for _ in radii])
+    lines = dict(t=t, phi=phi, radii=radii, Flux_Lines=a)
+    calls = []
+
+    class S:
+        def solve(self, q):
+            calls.append(("solve", q.sleeve_conductivity_axial))
+            return dict(sleeve_loss_w=2.0, sleeve_loss_rel_change=1e-6, _wave={})
+
+        def sleeve_lines(self, q):
+            calls.append(("lines", q.sleeve_conductivity_axial))
+            return lines
+
+    r = sleeve_loss_check(p, sigma=3e4, session=S())
+    assert calls == [("solve", 3e4), ("lines", 0.0)]
+    ref = sleeve_shell_estimate(lines, p, sigma=3e4)["loss_ring"]
+    assert r["estimate"] == pytest.approx(ref, rel=1e-12) and r["ratio"] == pytest.approx(2.0 / ref)
+    assert "_wave" not in r["fe"]
+    with pytest.raises(ValueError):
+        sleeve_loss_check(p.replace(sleeve_fibre="carbon_sm", sleeve_wind_angle=30.0), session=S())

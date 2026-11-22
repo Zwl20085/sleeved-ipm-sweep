@@ -363,6 +363,13 @@ def write_deck(p: Params, model: MechModel, path: str | Path, results_file: str 
         a("ASEL,S,AREA,,301")
         a(f"AESIZE,ALL,{_num(hs)}")
         a("ALLSEL")
+        if p.is_bridgeless and hs < h:
+            # thin sleeve on the bridgeless rotor: the bore arc (line 30003, the contact target) sized like
+            # the lamination OD, as for a layered sleeve, so that both sides of the sleeve contact are meshed
+            # alike (the finer target of the area size alone made the contact pressure ripple). Written only
+            # when the area size is finer than mech_mesh, so every other deck is unchanged; the
+            # bridge-retained rotor keeps its deck (docs/methods.md, 3).
+            a(f"LESIZE,30003,{_num(h)},,,,1")
     a("AMESH,ALL")
     # contact -----------------------------------------------------------------------------
     if model.sleeve is not None:

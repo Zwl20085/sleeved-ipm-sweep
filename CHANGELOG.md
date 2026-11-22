@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Review fixes
+
+* **Bridgeless deck: contact target meshed like the lamination.** With the bridgeless rotor's
+  thin default sleeve (0.5 mm) the sleeve area size (thickness / 3) made the bore arc, the target
+  of the sleeve contact, finer than the lamination OD; it is now sized `mech_mesh`, as for a
+  layered sleeve (only when the area size is finer, and only for `sleeved_bridgeless`). The
+  bridgeless default deck changes by that one line (pinned hash updated); headline, global and
+  magnet peaks move by < 0.01 MPa, sleeve hoop 236.6 to 236.5 MPa, lips by up to 0.4 MPa,
+  `tau_sleeve_max` 6.0 to 3.8 MPa (docs/validation.md sections 2, 3, 11). Bridge-retained decks
+  are byte-identical. The point key does not change, so bridgeless mech points with such a thin
+  sleeve cached by an earlier version are reused with their earlier results; use a new sweep
+  name to re-solve them.
+* **`sipm validate sleeve-loss`** (`sipm.validation.sleeve_loss_check`): the FE sleeve loss against
+  the thin-shell estimate of docs/validation.md section 13 from the package (re-run: 0.9929).
+* `MaxwellSession.ac_loss` models the sleeve non-conducting, so a conducting sleeve's loss is
+  not counted as copper loss in `kac`.
+* `failure_indices` rejects `f12_star` outside (-1, 1) (open Tsai-Wu envelope).
+* Citations checked against publisher / DOI / NTRS records: Chamis cited as NASA TM-83320
+  (1983); issue numbers added; unconfirmed chapter and equation numbers removed.
+* ansys-marked tests for the bridgeless rotor with a layered, prestressed sleeve and with a
+  conducting sleeve, and for `sleeve_loss_check`.
+
 ### Sleeve eddy-current loss (2D, axial current)
 
 * **Sleeve conductivity.** New parameters `sleeve_sigma_fibre` and `sleeve_sigma_transverse`
@@ -106,7 +128,7 @@
   `coupled_pressure`; `sipm validate ring-liftoff` / `liftoff`. Validation (docs/validation.md
   section 11): FE against closed form on the ring 3e-6; on the bridge-retained rotor a direct run
   at the extrapolated speed opens the first element (about 0.5 %); on the bridgeless rotor the
-  linearity fails (8.7 % deviation, edges open at standstill when hot).
+  linearity fails (6.6 % deviation, edges open at standstill when hot).
 * `write_deck` gains the keyword `contact_elements` (default False). New point keys only when
   a new parameter leaves its default, so existing caches stay valid.
 
@@ -185,7 +207,7 @@
   `lip2_pole`, `lip2_q`; each reported as `svm_<name>`, plus `svm_lam_where`. Each section
   leaves out `stress_corner_margin` (0.5 mm) at its sharp end corners. All bridge-retained
   sections and the bridgeless `qhole` converge within 2 % between the two finest meshes; the
-  bridgeless lips do not (3-11 %, docs/validation.md section 3). The global lamination peak
+  bridgeless lips do not (3-10 %, docs/validation.md section 3). The global lamination peak
   stays as `svm_lam_max_all` (mesh-dependent). Plots name the quantity ("Max von Mises at named
   lamination sections").
 * Sample mechanical results re-solved with bonded magnets (`sample_mech_results.csv`, new

@@ -394,7 +394,13 @@ The deck is plain APDL, written by Python, run in batch, and post-processed into
 2. **2D plane stress** by default (`plane="strain"` available), PLANE183, free triangular
    mesh, `mech_mesh` globally, `mech_mesh_fine` on all lines shorter than 3 mm (fillets,
    bridges, rib, lug faces), at least three quadratic elements through the sleeve (a layered
-   sleeve: at least two through every layer, section 4.6).
+   sleeve: at least two through every layer, section 4.6). Where that makes the sleeve's element
+   size finer than `mech_mesh` on the bridgeless rotor (its default 0.5 mm sleeve), the sleeve bore
+   arc, the target of the sleeve contact, keeps the lamination's size `mech_mesh`, as for a
+   layered sleeve: with the finer target the contact pressure rippled along the interface
+   (validation.md section 2). The bridge-retained rotor's decks are not changed by this rule: at
+   its default 1.5 mm sleeve the two sizes are equal anyway, while a thinner sleeve there (below
+   3 x `mech_mesh`) keeps the finer target, so its published results stay as they are.
 3. **Materials:** linear elastic, small deformation (`NLGEOM,OFF`), isotropic lamination
    and magnets (Table II). The sleeve is cylindrically orthotropic: element axes come from
    a local cylindrical system (`ESYS`), x = radial, y = hoop, z = axial (see section 4). A
@@ -537,7 +543,7 @@ the linearity add a flag to it while the value is still reported: a case that is
 the extrapolated speed, and, when three or more fully closed speeds exist at the temperature,
 a middle one whose element pressures deviate from the two-point lines by more than 1 % of the
 element's standstill pressure (`loadcases.LINEARITY_TOL`; measured: 3e-5 in the bridge-retained
-rotor, 8.7 % in the bridgeless one).
+rotor, 6.6 % in the bridgeless one).
 The closed form of the disc + ring (`sipm.analytic.liftoff_speed`, with temperature) uses the
 same superposition, p0 from interference and temperature at standstill and c from the
 centrifugal load alone. Validation: validation.md section 11. The linearity holds for the
@@ -566,8 +572,8 @@ nu13 = nu12, G13 = G12, nu23 = E2/(2 G23) - 1). E1, nu12 and the density follow 
 mixtures in every model. `sleeve_micromechanics` selects the transverse and shear constants:
 
 * `chamis` (default): Chamis' simplified micromechanics equations, M = Mm / (1 - sqrt(vf)
-  (1 - Mm/Mf)) for E2, G12 and G23 (C.C. Chamis, SAMPE Quarterly 15(3):14-23, 1984; NASA
-  TM-83320, 1983);
+  (1 - Mm/Mf)) for E2, G12 and G23 (C.C. Chamis, NASA TM-83320, 1983, presented at the
+  SPI Reinforced Plastics/Composites Institute annual conference, Houston, February 1983);
 * `halpin_tsai`: the Halpin-Tsai equations with xi = 2 for E2 and xi = 1 for G12 and G23
   (J.C. Halpin, J.L. Kardos, Polym. Eng. Sci. 16(5):344-352, 1976; xi = 1 for G23 is a choice,
   Halpin-Tsai has no canonical value there);
@@ -585,7 +591,7 @@ direction in the hoop-axial surface (0 = hoop winding). `angle_ply` rotates the 
 stiffness about the radial axis by +theta and -theta and homogenises the two plies as a
 layered medium: in-plane strains (hoop, axial, hoop-axial) and out-of-plane stresses
 (radial and the two transverse shears) are common to the plies, the other components are
-thickness averages (C.T. Sun, S. Li, J. Compos. Mater. 22:629-639, 1988). For a balanced
+thickness averages (C.T. Sun, S. Li, J. Compos. Mater. 22(7):629-639, 1988). For a balanced
 winding the result is orthotropic in the cylinder axes, so the deck needs no change. Its
 Poisson ratios can lie outside [0, 0.5) (near +/-30 deg nu_hoop_axial exceeds 1 and
 nu_hoop_radial is negative), which is physical for a laminate. Parameter validation therefore
@@ -629,8 +635,8 @@ criteria are evaluated on both transverse planes, (s11, s22, t12) and (s11, s33,
 the same strengths, and the worse is reported. This relies on the ply's transverse isotropy;
 it ignores t23 and the interaction of s22 with s33, i.e. it is not a 3D criterion. The
 criteria (`sipm.composite.failure_indices`): maximum stress; Tsai-Wu with F12* = -1/2
-(S.W. Tsai, E.M. Wu, J. Compos. Mater. 5:58-80, 1971); Hashin's plane-stress fibre and matrix
-modes (Z. Hashin, J. Appl. Mech. 47:329-334, 1980), with the transverse shear strength of the
+(S.W. Tsai, E.M. Wu, J. Compos. Mater. 5(1):58-80, 1971); Hashin's plane-stress fibre and matrix
+modes (Z. Hashin, J. Appl. Mech. 47(2):329-334, 1980), with the transverse shear strength of the
 matrix-compression mode taken equal to `sleeve_S`. Outputs: `sleeve_fi_max_stress`,
 `sleeve_fi_tsai_wu`, `sleeve_fi_hashin_fibre`, `sleeve_fi_hashin_matrix` (maximum over the
 sleeve corner nodes, >= 1 = failure) and `sleeve_sf`, the minimum Tsai-Wu strength ratio

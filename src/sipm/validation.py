@@ -330,6 +330,46 @@ def sleeve_shell_estimate(lines: dict, p: Params, sigma: float | None = None) ->
     return out
 
 
+SLEEVE_LOSS_SIGMA = 1.0e4   # S/m, axial conductivity of the check point of docs/validation.md section 13
+
+
+def sleeve_loss_check(p: Params | None = None, sigma: float = SLEEVE_LOSS_SIGMA, session=None,
+                      cfg: Config | None = None) -> dict:
+    """FE sleeve loss against the thin-shell estimate (docs/validation.md section 13 (c)).
+
+    ``p`` (default: the bridge-retained default point) is solved twice in Maxwell: with the sleeve's
+    axial conductivity set to ``sigma`` (``sleeve_sigma_transverse`` = sigma on a hoop winding,
+    ``sleeve_sigma_fibre`` = 0, so the axial value is sigma) through :meth:`MaxwellSession.solve`, and
+    non-conducting with A_z exported on arcs through the sleeve (:meth:`MaxwellSession.sleeve_lines`),
+    from which :func:`sleeve_shell_estimate` gives the resistance-limited loss at that sigma. Returns
+    ``fe_loss`` (W), ``estimate`` (zero ring current, W), ``ratio`` = FE / estimate, the FE result
+    (``fe``) and the estimate's dict (``shell``). ``session``: an open :class:`MaxwellSession` to use
+    (else one is opened with ``cfg`` and closed)."""
+    from .maxwell import MaxwellSession
+
+    p = default_params("sleeved_bridged") if p is None else p
+    if p.sleeve_wind_angle != 0 or p.is_layered:
+        raise ValueError("sleeve_loss_check needs a single hoop-wound sleeve (axial conductivity = sigma_T)")
+    pc = p.replace(sleeve_sigma_fibre=0.0, sleeve_sigma_transverse=float(sigma))
+    p0 = p.replace(sleeve_sigma_fibre=0.0, sleeve_sigma_transverse=0.0)
+
+    def run(s):
+        fe = s.solve(pc)
+        lines = s.sleeve_lines(p0)
+        return fe, lines
+
+    if session is None:
+        with MaxwellSession(cfg or Config()) as s:
+            fe, lines = run(s)
+    else:
+        fe, lines = run(session)
+    shell = sleeve_shell_estimate(lines, p0, sigma=pc.sleeve_conductivity_axial)
+    est = shell["loss_ring"]
+    fe = {k: v for k, v in fe.items() if not k.startswith("_")}
+    return dict(sigma=pc.sleeve_conductivity_axial, fe_loss=fe["sleeve_loss_w"], estimate=est,
+                ratio=fe["sleeve_loss_w"] / est, fe=fe, shell=shell)
+
+
 def mesh_study(p: Params, sizes=((0.8, 0.3), (0.5, 0.15), (0.3, 0.08), (0.2, 0.04)), cfg: Config | None = None,
                workdir: str | Path | None = None) -> list[dict]:
     """Solve one design with successively finer meshes; returns one row per mesh."""

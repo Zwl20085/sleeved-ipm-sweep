@@ -116,8 +116,10 @@ def test_new_fields_in_key_lists():
 PINNED_DECKS = {
     ("sleeved_bridged", "iso"): "0dbe06c6d82f923ce5b554ae71bc9c0f1be707e23066a045eb49c26e912ea9e5",
     ("sleeved_bridged", "hot"): "85ed5b91f36a52d230608b593d6de4832c6c953a0a1e5854dc7e7e91ba9ff90d",
-    ("sleeved_bridgeless", "iso"): "ca6115e7fb6ae9ca5df4a103e93c14d1813f33eb262c492a4e339160c0901d33",
-    ("sleeved_bridgeless", "hot"): "0624190794dbd31fd1a6b94b49b273222f62cfde2e104f5a958097a333002a28",
+    # bridgeless: the thin-sleeve bore arc sized like the lamination OD (one added LESIZE line; the decks
+    # before it hashed ca6115e7... (iso) and 06241907... (hot))
+    ("sleeved_bridgeless", "iso"): "16dbc235f8b14b3290b362ed21be512c61a4577929b007764ceab5ad78d2f5b6",
+    ("sleeved_bridgeless", "hot"): "5ebb8ed61adbefe579a4fb75b8e2f5d700d78cc1ff5a4395e51189d121921a40",
     ("ring", "iso"): "45d2736261b67693dbdeca57bc502f22e1c80fd3f2886115fcefa6cb9a8da92e",
     ("ring", "hot"): "47c4ea4657ec82fea1c2baf0ac120dddc24897e1c55dbcb837bd7d765f90b87b",
 }
@@ -138,6 +140,23 @@ def test_deck_unchanged_without_cases(tmp_path, key):
     assert "CEMX" not in text and CONTACT_FILE.split(".")[0] not in text
     # mech_cases does not enter the deck itself (one deck per case, see Params.for_case)
     assert _deck_text(tmp_path, topo, p.replace(mech_cases=ALL, overspeed_factor=1.5)) == text
+
+
+@pytest.mark.parametrize("topo, kw, sized", [
+    ("sleeved_bridgeless", {}, True),                                  # 0.5 mm sleeve: area size 0.167 < 0.5
+    ("sleeved_bridgeless", dict(sleeve_thickness=1.5), False),         # area size = mech_mesh: deck as before
+    ("sleeved_bridgeless", dict(sleeve_thickness=0.9, mech_mesh=0.8), True),
+    ("sleeved_bridged", {}, False),
+    ("sleeved_bridged", dict(sleeve_thickness=1.0), False),            # bridge-retained decks are not touched
+])
+def test_bridgeless_bore_arc_sized_like_lamination(tmp_path, topo, kw, sized):
+    p = default_params(topo, **kw)
+    lines = _deck_text(tmp_path, topo, p).splitlines()
+    bore = [ln for ln in lines if ln.startswith("LESIZE,30003")]
+    assert bore == ([f"LESIZE,30003,{p.mech_mesh:.10g},,,,1"] if sized else [])
+    if sized:   # after the area size of the sleeve (which it overrides on that line) and before meshing
+        aesize = "AESIZE,ALL,%.10g" % (p.sleeve_thickness / 3)
+        assert lines.index(aesize) < lines.index(bore[0]) < lines.index("AMESH,ALL")
 
 
 @pytest.mark.parametrize("topo", ["sleeved_bridged", "sleeved_bridgeless", "ring"])

@@ -249,6 +249,27 @@ def test_mech_point_multilayer(cfg):
     assert sorted(set(s["layer"].tolist())) == [1, 2, 3]
 
 
+@need_mapdl
+def test_mech_point_multilayer_bridgeless(cfg):
+    """A hoop / helical / hoop sleeve with winding prestress on the bridgeless rotor (0.5 mm sleeve, layers
+    0.25 / 0.125 / 0.125 mm) solves with the per-layer outputs (docs/validation.md section 12)."""
+    from sipm.mapdl import solve_mech
+
+    p = default_params("sleeved_bridgeless", sleeve_fibre="carbon_sm", sleeve_layers="0:2,20:1,0:1",
+                       sleeve_layer_prestress="50")
+    r = solve_mech(p, cfg, cfg.workdir / "mech_multilayer_bridgeless")
+    hoop = [r[f"sh_sleeve_max_L{k}"] for k in (1, 2, 3)]
+    print(f"[mech 3 layers bridgeless] svm_lam_max {r['svm_lam_max']:.1f} MPa ({r['svm_lam_where']}), sleeve hoop "
+          f"per layer {', '.join(f'{h:.1f}' for h in hoop)} MPa, contact p min {r['contact_p_min']:.3f} MPa, "
+          f"SF {r['sleeve_sf']:.2f} (layer {r['sleeve_sf_layer']}), interlaminar shear "
+          f"{r['tau_sleeve_interface_max']:.3f} MPa, nodes {r['n_nodes']}")
+    assert r["sh_sleeve_max"] == max(hoop) and hoop[1] < min(hoop[0], hoop[2])
+    assert r["sleeve_sf"] == min(r[f"sleeve_sf_L{k}"] for k in (1, 2, 3)) and r["sleeve_sf"] > 1
+    assert r["sleeve_open_fraction"] == 0 and r["contact_p_min"] > 0
+    assert sorted(set(r["_sleeve_nodes"]["layer"].tolist())) == [1, 2, 3]
+    assert 0 < r["tau_sleeve_interface_max"] <= r["tau_sleeve_max"] + 1e-9
+
+
 @pytest.fixture(scope="module")
 def session(cfg):
     from sipm.maxwell import MaxwellSession
@@ -281,6 +302,33 @@ def test_em_point_conducting_sleeve(session):
     assert 4.8 < r["sleeve_loss_w"] < 5.3
     assert r["sleeve_sigma_axial"] == 1e4 and r["sleeve_skin_ratio"] > 10
     assert 0.5 * drag < r0["torque_avg"] - r["torque_avg"] < 1.5 * drag
+
+
+@need_aedt
+def test_em_point_conducting_sleeve_bridgeless(session):
+    """The conducting-sleeve path on the bridgeless rotor (0.5 mm sleeve, 1e4 S/m axial): converged loss,
+    torque lowered by about the drag torque (docs/validation.md section 13)."""
+    p0 = default_params("sleeved_bridgeless")
+    r0 = session.solve(p0)
+    r = session.solve(p0.replace(sleeve_sigma_transverse=1e4))
+    drag = r["sleeve_loss_w"] / (2 * math.pi * p0.em_rpm / 60)
+    print(f"[em conducting sleeve bridgeless] loss {r['sleeve_loss_w']:.4f} W "
+          f"(change {r['sleeve_loss_rel_change']:.2e}), torque {r0['torque_avg']:.4f} -> {r['torque_avg']:.4f} N m, "
+          f"drag torque {drag:.4f} N m")
+    assert r["sleeve_loss_rel_change"] < 1e-3
+    assert 3.0 < r["sleeve_loss_w"] < 3.7          # 3.352 W measured
+    assert 0.5 * drag < r0["torque_avg"] - r["torque_avg"] < 1.5 * drag
+
+
+@need_aedt
+def test_sleeve_loss_check(session):
+    """`sipm validate sleeve-loss`: FE loss against the thin-shell estimate at 1e4 S/m, ~0.993 at load
+    (docs/validation.md section 13 (c))."""
+    from sipm.validation import sleeve_loss_check
+
+    r = sleeve_loss_check(session=session)
+    print(f"[sleeve loss check] FE {r['fe_loss']:.4f} W, estimate {r['estimate']:.4f} W, FE/estimate {r['ratio']:.4f}")
+    assert abs(r["ratio"] - 0.993) < 5e-3
 
 
 @need_aedt

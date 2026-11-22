@@ -165,7 +165,7 @@ failed. AEDT is restarted every `aedt_restart_every` (10) EM points.
   (layer-2 web), `qhole` (lightening-hole fillets); bridgeless `qhole` and the pole-tip lips
   `lip1_pole`, `lip1_q`, `lip2_pole`, `lip2_q`. `svm_lam_where` names the section that holds
   the peak, `svm_lam_r` / `svm_lam_theta` its position. These sections converge with the mesh
-  within 2 %, except the **bridgeless lips, which do not** (3-11 %; they stay below 9 MPa at
+  within 2 %, except the **bridgeless lips, which do not** (3-10 %; they stay below 9 MPa at
   the default point and never set the headline). `svm_lam_max_all` (global lamination peak)
   and `svm_pm_max` (magnets) sit at sharp corners and contact edges and **grow with mesh
   refinement**; they are for information only. `sh_sleeve_max` is the peak sleeve hoop
