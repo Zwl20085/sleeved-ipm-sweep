@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import itertools
 import json
@@ -30,6 +31,8 @@ from .memory import MemoryGate, Watchdog
 from .params import Params, coerce, default_params, field_names
 
 CACHE_SCHEMA = 1
+# private solver outputs kept out of the point cache (raw solver keys, per-node arrays)
+NOT_CACHED = {"_raw", "_sleeve_nodes"}
 
 
 def grid(**axes: Iterable) -> list[dict[str, Any]]:
@@ -38,8 +41,25 @@ def grid(**axes: Iterable) -> list[dict[str, Any]]:
     return [dict(zip(names, vals)) for vals in itertools.product(*(list(axes[n]) for n in names))]
 
 
+# Parameters added after the cache format was fixed (thermal load case, composite sleeve and
+# its strengths). Each is left out of the point key while it sits at its default, so a point
+# that does not use the new features hashes exactly as before and caches written by earlier
+# versions stay valid. Such old cached mech points lack the new output columns (sleeve failure
+# indices, sr_sleeve_max, tau_sleeve_max); re-run with a fresh sweep name to get them.
+# A field added in future belongs here too.
+KEY_OMITTED_AT_DEFAULT = (
+    "lam_cte", "pm_cte", "sleeve_cte_hoop", "sleeve_cte_radial", "sleeve_cte_axial",
+    "mech_temperature", "mech_ref_temperature",
+    "sleeve_fibre", "sleeve_matrix", "sleeve_vf", "sleeve_micromechanics", "sleeve_wind_angle",
+    "sleeve_Xt", "sleeve_Xc", "sleeve_Yt", "sleeve_Yc", "sleeve_S",
+)
+_FIELD_DEFAULTS = {f.name: f.default for f in dataclasses.fields(Params)}
+
+
 def point_key(p: Params, physics: str) -> str:
-    s = json.dumps(dict(p=p.to_dict(), physics=physics, schema=CACHE_SCHEMA), sort_keys=True)
+    d = {k: v for k, v in p.to_dict().items()
+         if not (k in KEY_OMITTED_AT_DEFAULT and v == _FIELD_DEFAULTS[k])}
+    s = json.dumps(dict(p=d, physics=physics, schema=CACHE_SCHEMA), sort_keys=True)
     return hashlib.sha1(s.encode()).hexdigest()[:16]
 
 
@@ -185,7 +205,8 @@ class Sweep:
                         res = ctx(p, self.dir / "points" / key)
                         rec.update(status="ok", message="", outputs={k: v for k, v in res.items()
                                                                      if not k.startswith("_")},
-                                   extra={k[1:]: v for k, v in res.items() if k.startswith("_") and k != "_raw"})
+                                   extra={k[1:]: v for k, v in res.items()
+                                          if k.startswith("_") and k not in NOT_CACHED})
                     except KeyboardInterrupt:
                         raise
                     except Exception as e:

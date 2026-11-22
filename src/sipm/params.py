@@ -1,7 +1,8 @@
 """Machine, material and analysis parameters.
 
 All lengths are in mm, angles in degrees, moduli in GPa, densities in kg/m^3,
-speeds in rpm and currents in A unless the field name says otherwise.
+speeds in rpm, currents in A, temperatures in degC and thermal expansion coefficients in
+1/K unless the field name says otherwise.
 
 Every field carries a ``source`` tag:
 
@@ -36,6 +37,9 @@ REMOVED_TOPOLOGIES = {
                     "distributed and cannot be rebuilt. Use 'sleeved_bridged' or 'sleeved_bridgeless'",
 }
 SOURCES = ("maxwell", "paper", "illustrative")
+CTE_FIELDS = ("lam_cte", "pm_cte", "sleeve_cte_hoop", "sleeve_cte_radial", "sleeve_cte_axial")
+CTE_RANGE = (-2.0e-5, 1.0e-4)             # 1/K; engineering solids lie well inside
+TEMPERATURE_RANGE = (-273.15, 500.0)      # degC, (exclusive, inclusive]
 
 
 def _f(default, unit, source, doc, maxwell_name="", **kw):
@@ -228,10 +232,65 @@ class Params:
     sleeve_G_hoop_axial: float = _f(4.5, "GPa", "illustrative", "Shear modulus hoop-axial")
     sleeve_G_radial_axial: float = _f(3.1, "GPa", "illustrative", "Transverse shear modulus")
 
+    # ---- composite sleeve specification (optional; sipm.composite) ---------------------------
+    sleeve_fibre: str = _f("", "-", "illustrative",
+                           "Sleeve fibre class from sipm.composite.FIBRES (carbon_sm, carbon_im, carbon_hm, "
+                           "e_glass), or '' (default) to use the sleeve constants as entered. When set, the "
+                           "thirteen sleeve constants (sleeve_E_*, sleeve_nu_*, sleeve_G_*, sleeve_density, "
+                           "sleeve_cte_*) are DERIVED from fibre, matrix, vf, micromechanics model and winding "
+                           "angle whenever the parameters are created or replaced, overwriting any values "
+                           "passed for them")
+    sleeve_matrix: str = _f("epoxy", "-", "illustrative",
+                            "Sleeve matrix class from sipm.composite.MATRICES (epoxy, peek); used only with "
+                            "sleeve_fibre")
+    sleeve_vf: float = _f(0.55, "-", "illustrative", "Sleeve fibre volume fraction, in (0, 1); used only with "
+                          "sleeve_fibre")
+    sleeve_micromechanics: str = _f("chamis", "-", "illustrative",
+                                    "Micromechanics model for the transverse and shear ply constants: chamis, "
+                                    "halpin_tsai or rom; used only with sleeve_fibre")
+    sleeve_wind_angle: float = _f(0.0, "deg", "illustrative",
+                                  "Winding angle of a balanced +/- angle-ply sleeve, measured from the hoop "
+                                  "direction (0 = hoop winding), in [0, 90]. Non-zero needs sleeve_fibre (the "
+                                  "ply cannot be recovered from homogenised constants)")
+    # unidirectional ply strengths for the sleeve failure indices (sipm.composite.failure_indices)
+    sleeve_Xt: float = _f(2000.0, "MPa", "illustrative",
+                          "Sleeve ply strength, fibre-direction tension (default: STRENGTHS['carbon_sm_epoxy'], "
+                          "a class-typical round number)")
+    sleeve_Xc: float = _f(1200.0, "MPa", "illustrative", "Sleeve ply strength, fibre-direction compression")
+    sleeve_Yt: float = _f(50.0, "MPa", "illustrative", "Sleeve ply strength, transverse tension")
+    sleeve_Yc: float = _f(200.0, "MPa", "illustrative", "Sleeve ply strength, transverse compression")
+    sleeve_S: float = _f(70.0, "MPa", "illustrative",
+                         "Sleeve ply shear strength (also used for the transverse shear strength in Hashin's "
+                         "matrix-compression mode)")
+
+    # ---- thermal expansion (secant CTE about mech_ref_temperature) -----------------------------
+    lam_cte: float = _f(12.0e-6, "1/K", "illustrative",
+                        "Lamination thermal expansion coefficient (electrical steel, typically 11-13e-6 /K)")
+    pm_cte: float = _f(2.0e-6, "1/K", "illustrative",
+                       "PM thermal expansion coefficient, one isotropic value. Sintered NdFeB is strongly "
+                       "anisotropic (about +5e-6 /K along the magnetisation, about -1e-6 /K across it); the "
+                       "default is the mean of the two in-plane directions")
+    sleeve_cte_hoop: float = _f(0.0, "1/K", "illustrative",
+                                "Sleeve thermal expansion along the fibre (hoop); carbon/epoxy is about zero "
+                                "(typically -1e-6 .. +0.5e-6 /K)")
+    sleeve_cte_radial: float = _f(30.0e-6, "1/K", "illustrative",
+                                  "Sleeve transverse (radial) thermal expansion, matrix-dominated (typically "
+                                  "25-35e-6 /K for carbon/epoxy)")
+    sleeve_cte_axial: float = _f(30.0e-6, "1/K", "illustrative",
+                                 "Sleeve axial thermal expansion (transversely isotropic: = radial); enters plane "
+                                 "strain only")
+
     # ---- mechanical load case / solver -----------------------------------------------------
     mech_rpm: float = _f(20000.0, "rpm", "paper", "Speed for the stress analysis")
     interference: float = _f(0.10, "mm", "illustrative",
                              "Radial interference between lamination OD and sleeve bore")
+    mech_temperature: float = _f(20.0, "degC", "illustrative",
+                                 "Uniform rotor temperature (lamination, magnets and sleeve) of the stress "
+                                 "analysis")
+    mech_ref_temperature: float = _f(20.0, "degC", "illustrative",
+                                     "Reference temperature: the temperature at which the parts have their "
+                                     "stress-free fitted dimensions, i.e. at which interference is defined. "
+                                     "Equal to mech_temperature (default) = isothermal analysis")
     mu_sleeve: float = _f(0.0, "-", "illustrative", "Friction coefficient sleeve/lamination")
     mu_magnet: float = _f(0.0, "-", "illustrative", "Friction coefficient magnet/pocket")
     plane: str = _f("stress", "-", "illustrative", "2D assumption: 'stress' or 'strain'")
@@ -248,7 +307,60 @@ class Params:
 
     # ------------------------------------------------------------------------------------
     def __post_init__(self):
+        self._derive_sleeve()
         self.validate()
+
+    def _composite_spec_ok(self) -> bool:
+        from . import composite
+
+        return (self.sleeve_fibre in composite.FIBRES and self.sleeve_matrix in composite.MATRICES
+                and self.sleeve_micromechanics in composite.MODELS
+                and isinstance(self.sleeve_vf, (int, float)) and 0.0 < self.sleeve_vf < 1.0
+                and isinstance(self.sleeve_wind_angle, (int, float)) and 0.0 <= self.sleeve_wind_angle <= 90.0)
+
+    def _derive_sleeve(self) -> None:
+        """With a composite spec, overwrite the thirteen sleeve constants by the derived ones (an
+        invalid spec is left for :meth:`validate` to report)."""
+        if self.sleeve_fibre and self._composite_spec_ok():
+            from .composite import sleeve_params
+
+            for k, v in sleeve_params(self.sleeve_laminate()).items():
+                setattr(self, k, v)
+
+    def sleeve_laminate(self):
+        """The sleeve as a :class:`sipm.composite.Laminate` (balanced +/- ``sleeve_wind_angle``
+        winding) from the composite spec, or None when the constants are entered directly
+        (``sleeve_fibre`` = '')."""
+        if not self.sleeve_fibre:
+            return None
+        from .composite import FIBRES, MATRICES, angle_ply, lamina
+
+        ply = lamina(FIBRES[self.sleeve_fibre], MATRICES[self.sleeve_matrix], self.sleeve_vf,
+                     self.sleeve_micromechanics)
+        return angle_ply(ply, self.sleeve_wind_angle)
+
+    def sleeve_strength(self):
+        """The sleeve ply strengths as a :class:`sipm.composite.Strength` (St = S)."""
+        from .composite import Strength
+
+        return Strength(Xt=self.sleeve_Xt, Xc=self.sleeve_Xc, Yt=self.sleeve_Yt, Yc=self.sleeve_Yc, S=self.sleeve_S)
+
+    def sleeve_compliance(self):
+        """6x6 sleeve compliance [1/GPa] from the sleeve constants, cylinder Voigt order (hoop,
+        axial, radial, axial-radial, hoop-radial, hoop-axial), engineering shear strains,
+        S[a, b] = -nu_ab / E_a with nu_ab = -eps_b/eps_a under stress along a."""
+        import numpy as np
+
+        Eh, Ea, Er = self.sleeve_E_hoop, self.sleeve_E_axial, self.sleeve_E_radial
+        S = np.zeros((6, 6))
+        S[0, 0], S[1, 1], S[2, 2] = 1 / Eh, 1 / Ea, 1 / Er
+        S[0, 1] = S[1, 0] = -self.sleeve_nu_hoop_axial / Eh
+        S[0, 2] = S[2, 0] = -self.sleeve_nu_hoop_radial / Eh
+        S[2, 1] = S[1, 2] = -self.sleeve_nu_radial_axial / Er
+        S[3, 3] = 1 / self.sleeve_G_radial_axial
+        S[4, 4] = 1 / self.sleeve_G_hoop_radial
+        S[5, 5] = 1 / self.sleeve_G_hoop_axial
+        return S
 
     def replace(self, **changes) -> Params:
         unknown = set(changes) - set(field_names())
@@ -283,6 +395,11 @@ class Params:
         return self.sleeve_nu_hoop_radial * self.sleeve_E_radial / self.sleeve_E_hoop
 
     @property
+    def mech_delta_t(self) -> float:
+        """Uniform temperature change of the stress analysis from the fitted (reference) state, K."""
+        return self.mech_temperature - self.mech_ref_temperature
+
+    @property
     def is_bridgeless(self) -> bool:
         return self.topology == "sleeved_bridgeless"
 
@@ -313,7 +430,8 @@ class Params:
                     "em_span", "em_step", "mesh_rotor", "mesh_stator", "mesh_gap", "lam_density",
                     "lam_E", "pm_density", "pm_E", "sleeve_density", "sleeve_E_hoop", "sleeve_E_radial",
                     "sleeve_E_axial", "sleeve_G_hoop_radial", "sleeve_G_hoop_axial",
-                    "sleeve_G_radial_axial", "mech_mesh", "mech_mesh_fine", "cu_conductivity", "stress_corner_margin"]
+                    "sleeve_G_radial_axial", "mech_mesh", "mech_mesh_fine", "cu_conductivity", "stress_corner_margin",
+                    "sleeve_Xt", "sleeve_Xc", "sleeve_Yt", "sleeve_Yc", "sleeve_S"]
         for n in nonneg:
             v = getattr(self, n)
             if isinstance(v, (int, float)) and v < 0:
@@ -353,12 +471,43 @@ class Params:
                 err.append(f"magnet_contact must be 'bonded' or 'frictional', got {self.magnet_contact!r}")
             if self.plane not in ("stress", "strain"):
                 err.append("plane must be 'stress' or 'strain'")
-            for n in ("lam_nu", "pm_nu", "sleeve_nu_hoop_radial", "sleeve_nu_hoop_axial",
-                      "sleeve_nu_radial_axial"):
+            for n in ("lam_nu", "pm_nu"):
                 if not 0 <= getattr(self, n) < 0.5:
                     err.append(f"{n} must be in [0, 0.5)")
-            if self.sleeve_nu_radial_hoop * self.sleeve_nu_hoop_radial >= 1:
-                err.append("sleeve Poisson ratios give a non-positive-definite compliance")
+            # sleeve: the full orthotropic compliance must be symmetric positive definite (the
+            # condition MAPDL checks too); a +/- angle-ply winding legitimately has Poisson ratios
+            # outside [0, 0.5), so the ratios are not bounded individually
+            import numpy as np
+
+            if np.linalg.eigvalsh(self.sleeve_compliance()).min() <= 0:
+                err.append("sleeve elastic constants give a compliance that is not positive definite "
+                           "(check the Poisson ratios against the moduli)")
+            if self.sleeve_fibre:
+                from . import composite
+
+                if self.sleeve_fibre not in composite.FIBRES:
+                    err.append(f"sleeve_fibre must be '' or one of {tuple(composite.FIBRES)}, "
+                               f"got {self.sleeve_fibre!r}")
+                if self.sleeve_matrix not in composite.MATRICES:
+                    err.append(f"sleeve_matrix must be one of {tuple(composite.MATRICES)}, got {self.sleeve_matrix!r}")
+                if self.sleeve_micromechanics not in composite.MODELS:
+                    err.append(f"sleeve_micromechanics must be one of {composite.MODELS}, "
+                               f"got {self.sleeve_micromechanics!r}")
+            elif self.sleeve_wind_angle != 0:
+                err.append("sleeve_wind_angle != 0 needs a composite spec (sleeve_fibre): the ply cannot be "
+                           "recovered from homogenised constants")
+            if not 0.0 < self.sleeve_vf < 1.0:
+                err.append(f"sleeve_vf must be in (0, 1), got {self.sleeve_vf}")
+            if not 0.0 <= self.sleeve_wind_angle <= 90.0:
+                err.append(f"sleeve_wind_angle must be in [0, 90] deg, got {self.sleeve_wind_angle}")
+            for n in CTE_FIELDS:
+                if not CTE_RANGE[0] <= getattr(self, n) <= CTE_RANGE[1]:
+                    err.append(f"{n} must be in [{CTE_RANGE[0]:g}, {CTE_RANGE[1]:g}] 1/K (a value in "
+                               f"1e-6/K entered without the factor?), got {getattr(self, n)}")
+            for n in ("mech_temperature", "mech_ref_temperature"):
+                if not TEMPERATURE_RANGE[0] < getattr(self, n) <= TEMPERATURE_RANGE[1]:
+                    err.append(f"{n} must be in ({TEMPERATURE_RANGE[0]:g}, {TEMPERATURE_RANGE[1]:g}] degC, "
+                               f"got {getattr(self, n)}")
             if self.r_lam <= self.shaft_diameter / 2:
                 err.append("sleeve too thick: lamination OD is inside the bore")
             if self.em_span < self.em_step:

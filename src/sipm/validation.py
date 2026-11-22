@@ -12,9 +12,20 @@ from .config import Config
 from .mapdl import mech_model_ring, solve_mech
 from .params import Params, default_params
 
+RING_CASES = ("isotropic", "orthotropic", "thermal")
+THERMAL_DELTA_T = 100.0   # K, rotor temperature above the fitting temperature in the 'thermal' case
+
 
 def ring_params(case: str, **kw) -> Params:
-    """Material set for the disc + sleeve check. ``case`` = 'isotropic' or 'orthotropic'."""
+    """Material set for the disc + sleeve check. ``case`` = 'isotropic', 'orthotropic' or
+    'thermal' (the orthotropic set, with the whole rotor ``THERMAL_DELTA_T`` above the
+    temperature at which the interference is defined, default CTEs: steel 12e-6 /K, sleeve
+    0 /K along the fibre and 30e-6 /K across it)."""
+    if case not in RING_CASES:
+        raise ValueError(f"case must be one of {RING_CASES}")
+    if case == "thermal":
+        ref = kw.get("mech_ref_temperature", default_params("sleeved_bridged").mech_ref_temperature)
+        kw.setdefault("mech_temperature", ref + THERMAL_DELTA_T)
     p = default_params("sleeved_bridged", **kw)
     if case == "isotropic":
         # an isotropic aluminium-like ring on a steel disc (two different materials)
@@ -23,17 +34,17 @@ def ring_params(case: str, **kw) -> Params:
         p = p.replace(sleeve_E_hoop=E, sleeve_E_radial=E, sleeve_E_axial=E, sleeve_nu_hoop_radial=nu,
                       sleeve_nu_hoop_axial=nu, sleeve_nu_radial_axial=nu, sleeve_G_hoop_radial=G,
                       sleeve_G_hoop_axial=G, sleeve_G_radial_axial=G, sleeve_density=2700.0)
-    elif case != "orthotropic":
-        raise ValueError("case must be 'isotropic' or 'orthotropic'")
     return p
 
 
 def ring_reference(p: Params, a: float, t: float) -> dict:
+    """Closed form for the disc + ring with the materials, speed, interference and uniform
+    temperature change of ``p`` (plane stress)."""
     w = p.mech_rpm * 2 * math.pi / 60
-    disc = analytic.isotropic(p.lam_E * 1e3, p.lam_nu, p.lam_density * 1e-12)
+    disc = analytic.isotropic(p.lam_E * 1e3, p.lam_nu, p.lam_density * 1e-12, alpha=p.lam_cte)
     ring = analytic.orthotropic(p.sleeve_E_radial * 1e3, p.sleeve_E_hoop * 1e3, p.sleeve_nu_hoop_radial,
-                                p.sleeve_density * 1e-12)
-    return analytic.summary(a, a + t, disc, ring, w, p.interference)
+                                p.sleeve_density * 1e-12, alpha_r=p.sleeve_cte_radial, alpha_t=p.sleeve_cte_hoop)
+    return analytic.summary(a, a + t, disc, ring, w, p.interference, dT=p.mech_delta_t)
 
 
 def ring_check(case: str = "orthotropic", radius: float = 71.1, t_sleeve: float = 1.5,
@@ -54,7 +65,8 @@ def ring_check(case: str = "orthotropic", radius: float = 71.1, t_sleeve: float 
     rows = [dict(quantity=q, fe=f, closed_form=c, rel_error=(f - c) / c if c else float("nan"))
             for q, f, c in pairs]
     return dict(case=case, radius=radius, t_sleeve=t_sleeve, interference=interference, rpm=rpm, mesh=mesh,
-                rows=rows, n_nodes=fe["n_nodes"], wall_s=fe["mech_wall_s"], reference=ref)
+                delta_t=p.mech_delta_t, rows=rows, n_nodes=fe["n_nodes"], wall_s=fe["mech_wall_s"], reference=ref,
+                fe=fe)
 
 
 def harmonic(theta_deg, y, order=1):

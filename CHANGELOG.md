@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Composite sleeve: thermal load case, sleeve stress field, ply failure
+
+* **Thermal load case.** New parameters `lam_cte`, `pm_cte`, `sleeve_cte_hoop`,
+  `sleeve_cte_radial`, `sleeve_cte_axial` (1/K), `mech_temperature` and `mech_ref_temperature`
+  (degC; the interference is defined at the reference temperature). The deck writes `TREF`,
+  `BFUNIF,TEMP` and `MP,ALPX/ALPY/ALPZ` (the sleeve's in its element axes) only when the two
+  temperatures differ; the defaults are equal, so every existing result is unchanged
+  (re-run, bit-identical). `sipm.analytic` gains the thermal particular term for the
+  orthotropic ring (valid through k = 1) and `ring_check("thermal")` validates the FE path
+  against it (agreement 0.12 %, docs/validation.md section 1).
+* **Sleeve stress field.** The deck writes the sleeve corner nodes (r, theta and the stresses
+  in the cylindrical system) to `sipm_sleeve_nodes.txt`; `sipm.mapdl.parse_sleeve_nodes` reads
+  it and `solve_mech` returns the arrays as `r["_sleeve_nodes"]` (not cached). New result
+  columns `sr_sleeve_max` (max radial stress: radial tension, the delamination driver) and
+  `tau_sleeve_max` (max |r-theta shear|).
+* **Composite sleeve specification** (`sipm.composite`): micromechanics (Chamis, Halpin-Tsai,
+  rule of mixtures; Schapery CTEs), balanced +/- winding homogenisation and ply failure
+  criteria. New parameters `sleeve_fibre` (default '' = constants as entered, as before),
+  `sleeve_matrix`, `sleeve_vf`, `sleeve_micromechanics`, `sleeve_wind_angle`: with a fibre set,
+  the thirteen sleeve constants are derived from the spec and overwrite passed values. Presets
+  are illustrative class-typical numbers, not commercial grades. `sipm composite --fibre ...
+  [--toml]` prints the derived constants without Ansys; `examples/06_composite_sleeve.py`
+  tabulates them, `examples/configs/mech_composite_sleeve.toml` sweeps winding angle and
+  temperature.
+* **Sleeve failure outputs.** Ply strengths `sleeve_Xt`, `sleeve_Xc`, `sleeve_Yt`, `sleeve_Yc`,
+  `sleeve_S` (illustrative carbon_sm/epoxy defaults). New columns `sleeve_fi_max_stress`,
+  `sleeve_fi_tsai_wu`, `sleeve_fi_hashin_fibre`, `sleeve_fi_hashin_matrix` and the Tsai-Wu
+  safety factor `sleeve_sf` with its location `sleeve_sf_r`, `sleeve_sf_theta`
+  (`sleeve_fi_tsai_wu` = 1 / `sleeve_sf`, linear in load and never negative), evaluated in
+  the +/- plies (or one hoop ply for directly entered constants) on both transverse planes.
+* **Sleeve constant validation** now requires a positive definite 6x6 sleeve compliance (what
+  MAPDL requires) instead of bounding each Poisson ratio to [0, 0.5): angle-ply constants
+  with nu > 1 or nu < 0 are accepted. Sets accepted before are still accepted unless their
+  compliance was indefinite.
+* **Sweep caches stay valid.** The new parameters are left out of the point key while they sit
+  at their defaults, so existing EM and mech caches are reused. Old cached mech points lack
+  the new columns (`sr_sleeve_max`, `tau_sleeve_max`, the sleeve failure columns); use a new
+  sweep name to get them. None of the new parameters enters the EM model key.
+* The Table II default constants are unchanged, including the published density of
+  1800 kg/m3 (the composite spec gives 1522 kg/m3 for carbon_sm/epoxy at vf = 0.536, where E1
+  matches Table II's 125 GPa; docs/methods.md section 4.5).
+
 ### README and small fixes
 
 * README reorganised as a reader's guide: what it answers, a five-minute try-out without

@@ -9,11 +9,11 @@ import sys
 from sipm.config import Config
 from sipm.maxwell import MaxwellSession
 from sipm.params import default_params
-from sipm.validation import mesh_study, open_circuit_check, ring_check
+from sipm.validation import RING_CASES, mesh_study, open_circuit_check, ring_check
 
 cfg = Config(workdir=sys.argv[1]) if len(sys.argv) > 1 else Config()
 
-for case in ("isotropic", "orthotropic"):
+for case in RING_CASES:  # isotropic, orthotropic, thermal (orthotropic, rotor 100 K above fitting)
     r = ring_check(case, cfg=cfg)
     for row in r["rows"]:
         print(f"ring {case:11s} {row['quantity']:<40s} FE {row['fe']:10.4f}  closed form {row['closed_form']:10.4f}"

@@ -1,0 +1,21 @@
+# Composite sleeve: winding angle x rotor temperature at 20000 rpm, 0.1 mm interference.
+# The sleeve constants (elastic, density, thermal expansion) are derived from the composite
+# spec in [base] (see `sipm composite --fibre carbon_sm --angle 30`); the failure indices use
+# the illustrative ply strengths sleeve_Xt ... sleeve_S. The interference is defined at
+# mech_ref_temperature (20 degC); 120 degC is a hot rotor.
+[sweep]
+name = "mech_composite_sleeve"
+physics = "mech"
+topology = "sleeved_bridged"
+
+[base]
+sleeve_fibre = "carbon_sm"
+sleeve_matrix = "epoxy"
+sleeve_vf = 0.55
+sleeve_micromechanics = "chamis"
+interference = 0.1
+mech_ref_temperature = 20.0
+
+[grid]
+sleeve_wind_angle = [0.0, 15.0, 30.0, 45.0]
+mech_temperature = [20.0, 120.0]

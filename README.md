@@ -14,6 +14,11 @@ speed with an interference-fitted sleeve, over any set of geometry, operating-po
 material parameters. Two rotors are built, both constructed the way the author's original
 Maxwell 2D models construct them, with those models' saved dimensions as defaults.
 
+For the sleeve it also answers how close the composite is to failing: its constants can come
+from fibre, matrix, fibre volume fraction and winding angle instead of being typed in, the
+rotor can run hot or cold against the temperature at which the sleeve was fitted, and every
+stress point reports ply failure indices and a safety factor for the sleeve.
+
 ![One pole of the two rotor topologies with the hairpin stator](docs/img/geometry_topologies.png)
 
 *(a) Sleeved bridge-retained rotor (`sleeved_bridged`): straight slots closed by outer
@@ -36,6 +41,7 @@ python -m pip install .
 sipm params --topology sleeved_bridged                  # every parameter: value (units in docs/parameters.md)
 sipm geometry --topology sleeved_bridgeless --out pole.png
 sipm deck --topology sleeved_bridged --out deck.inp     # the APDL deck a stress run would solve
+sipm composite --fibre carbon_sm --vf 0.55 --angle 30   # sleeve constants of a +/-30 deg carbon/epoxy winding
 sipm plot examples/data/sample_em_results.csv --out figs
 sipm plot examples/data/sample_mech_results.csv --sigma-allow 400 --out figs
 python examples/04_plots_from_samples.py figs
@@ -157,6 +163,14 @@ failed. AEDT is restarted every `aedt_restart_every` (10) EM points.
   and `svm_pm_max` (magnets) sit at sharp corners and contact edges and **grow with mesh
   refinement**; they are for information only. `sh_sleeve_max` is the peak sleeve hoop
   stress, `sleeve_open_fraction` the share of sleeve contact elements that opened.
+* **Sleeve** [MPa, or dimensionless]: `sr_sleeve_min` and `sr_sleeve_max` (most compressive
+  and largest radial stress; radial tension drives delamination), `tau_sleeve_max` (largest
+  |r-theta shear|); ply failure indices `sleeve_fi_max_stress`, `sleeve_fi_tsai_wu`,
+  `sleeve_fi_hashin_fibre`, `sleeve_fi_hashin_matrix` (1 = failure; the Tsai-Wu index is
+  1 / `sleeve_sf`, so it scales with the load) and `sleeve_sf`, the
+  smallest Tsai-Wu safety factor, at `sleeve_sf_r` / `sleeve_sf_theta`. The strengths behind
+  them (`sleeve_Xt` ... `sleeve_S`) are illustrative class values: supply your material's.
+  Sweeps cached by an earlier version are reused but lack these columns.
 
 The two figures below are drawn from the sample tables in `examples/data`
 (`python docs/make_figures.py --results`). They are outputs of this toolchain with the
@@ -204,8 +218,15 @@ Details in [docs/methods.md](docs/methods.md); checks and convergence in
   (layer-1 centre rib 13 MPa bonded, 147 MPa frictional; validation.md section 2).
 * **Mechanical model**: 2D, half a pole with symmetry on both cut lines, plane stress by default
   (`plane="strain"` available), linear elastic, small deformation, centrifugal load plus
-  interference, no shaft, no thermal load. Sharp corners of the Maxwell outline are kept, so
-  the stress is read at named sections (section 5).
+  interference and an optional uniform temperature (`mech_temperature` against the fitting
+  temperature `mech_ref_temperature`, equal by default), no shaft. Sharp corners of the
+  Maxwell outline are kept, so the stress is read at named sections (section 5).
+* **Sleeve**: one cylindrically orthotropic body. By default it has the paper's Table II
+  constants; with `sleeve_fibre` set they are derived (Chamis, Halpin-Tsai or rule-of-mixtures
+  micromechanics, balanced +/- winding). The fibre and matrix presets are illustrative class
+  values, not commercial grades. The failure indices are plane-stress ply criteria applied on
+  both transverse planes of the ply: no through-thickness interaction, no cure residual stress,
+  no end effects, no delamination growth or creep (docs/methods.md section 4).
 * **Electromagnetic model**: 2D transient, one pole with odd periodicity, stranded coils with
   7 turns per slot and 2 parallel paths, generic BH curve, linear magnets; no end effects, skew,
   iron loss, eddy currents, temperature or demagnetisation check.
@@ -213,7 +234,39 @@ Details in [docs/methods.md](docs/methods.md); checks and convergence in
 * Tested on Windows with Ansys 2024 R1. The MAPDL driver should also work on Linux; the
   Maxwell driver needs a platform supported by PyAEDT.
 
-## 7. Cite
+## 7. Sleeve modelling: what is in, what is next
+
+In now:
+
+* **Composite constants from a specification**: fibre and matrix class, fibre volume
+  fraction, micromechanics model and winding angle give the sleeve's elastic constants,
+  density and thermal expansion; `sipm composite` prints them without Ansys.
+* **Thermal load case**: a uniform rotor temperature against the temperature at which the
+  interference is defined, validated against an extended closed-form solution.
+* **Sleeve stress field and failure**: per-node sleeve stresses in cylindrical axes, the
+  largest radial tension and r-theta shear, ply failure indices (maximum stress, Tsai-Wu,
+  Hashin) and a safety factor at every stress point.
+
+Proposed next:
+
+1. **Sleeve eddy-current loss.** Carbon fibre conducts, far better along the fibre than across
+   it. The 2D model only sees axial current, so a hoop-wound sleeve needs a 3D or analytically
+   corrected loss model, and an angle-ply sleeve an axial conductivity in Maxwell.
+2. **Multi-layer sleeves.** Hoop and helical layers in one sleeve, with per-layer winding
+   tension as prestress instead of, or together with, the interference, and the matching
+   multi-ring closed form for validation.
+3. **Axial effects.** Generalised plane strain or an axisymmetric r-z model for the axial
+   stress, the sleeve end effects and the gaps between magnet segments.
+4. **Temperature in more detail.** Non-uniform temperature, matrix softening towards the glass
+   transition, and cure residual stress.
+5. **3D failure and long-term behaviour.** 3D failure criteria (Puck, LaRC, 3D Hashin),
+   delamination, and creep relaxation of the prestress.
+6. **Load cases as outputs.** A set of standard load cases reported together: standstill cold
+   and hot, overspeed, and the lift-off speed.
+7. **Calibration.** Fitting the ply data to measurements (ring tests) and propagating the
+   uncertainty in fibre volume fraction.
+
+## 8. Cite
 
 Please cite the paper this toolchain accompanies (also in [CITATION.cff](CITATION.cff)):
 
