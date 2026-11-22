@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+### Review fixes
+
+* **Bridgeless deck: contact target meshed like the lamination.** With the bridgeless rotor's
+  thin default sleeve (0.5 mm) the sleeve area size (thickness / 3) made the bore arc, the target
+  of the sleeve contact, finer than the lamination OD; it is now sized `mech_mesh`, as for a
+  layered sleeve (only when the area size is finer, and only for `sleeved_bridgeless`). The
+  bridgeless default deck changes by that one line (pinned hash updated); headline, global and
+  magnet peaks move by < 0.01 MPa, sleeve hoop 236.6 to 236.5 MPa, lips by up to 0.4 MPa,
+  `tau_sleeve_max` 6.0 to 3.8 MPa (docs/validation.md sections 2, 3, 11). Bridge-retained decks
+  are byte-identical. The point key does not change, so bridgeless mech points with such a thin
+  sleeve cached by an earlier version are reused with their earlier results; use a new sweep
+  name to re-solve them.
+* **`sipm validate sleeve-loss`** (`sipm.validation.sleeve_loss_check`): the FE sleeve loss against
+  the thin-shell estimate of docs/validation.md section 13 from the package (re-run: 0.9929).
+* `MaxwellSession.ac_loss` models the sleeve non-conducting, so a conducting sleeve's loss is
+  not counted as copper loss in `kac`.
+* `failure_indices` rejects `f12_star` outside (-1, 1) (open Tsai-Wu envelope).
+* Citations checked against publisher / DOI / NTRS records: Chamis cited as NASA TM-83320
+  (1983); issue numbers added; unconfirmed chapter and equation numbers removed.
+* ansys-marked tests for the bridgeless rotor with a layered, prestressed sleeve and with a
+  conducting sleeve, and for `sleeve_loss_check`.
+
+### Sleeve eddy-current loss (2D, axial current)
+
+* **Sleeve conductivity.** New parameters `sleeve_sigma_fibre` and `sleeve_sigma_transverse`
+  (S/m, ply values along and across the fibre; default 0 and 0 = non-conducting sleeve, model,
+  cache keys and results unchanged). Derived `Params.sleeve_conductivity_axial`: per layer
+  sigma_L sin^2 t + sigma_T cos^2 t (t = winding angle from hoop; a hoop winding gives the
+  across-fibre value), layers thickness-weighted (in parallel); helpers
+  `sipm.composite.ply_axial_conductivity` and `axial_conductivity`. No conductivity is shipped
+  as a material property.
+* **Cache keys.** The two fields are left out of the point key at their default
+  (`KEY_OMITTED_AT_DEFAULT`) and always out of `em_model_key`, which adds the derived axial
+  conductivity when it is > 0: every non-conducting sleeve keeps its key (pinned against the
+  previous code), winding angle and layers reach the EM key only through the axial conductivity.
+* **EM runs with a conducting sleeve** (`physics = "em"`, axial conductivity > 0): sleeve
+  conductivity and eddy effects on (set directly: PyAEDT's `eddy_effects_on` skips materials
+  below 1e5 S/m), no net-current constraint (the odd-periodic one-pole model makes the ring total
+  zero; Maxwell leaves a passive solid's net current free), same mesh as before; the run covers
+  a lead-in plus two 60-degree loss periods (180 electrical degrees by default). New columns
+  `sleeve_loss_w` (time average of `SolidLoss` over the last loss period, whole machine, stack
+  length), `sleeve_loss_rel_change` (change from the period before), `sleeve_loss_frac` (over
+  shaft power), `sleeve_sigma_axial`, `sleeve_skin_depth_mm` and `sleeve_skin_ratio` (at the
+  slot-passing frequency), `sleeve_mesh_mm`, `sleeve_steps_per_slot`; torque is averaged over the
+  last `em_span` degrees. A run with too few time steps per slot period or a mesh coarser than
+  half the skin depth is refused. Non-conducting runs and their columns are unchanged.
+* **`sipm.eddy`**: loss period, skin depth, `period_average`, and the thin-shell estimate of the
+  resistance-limited loss from the non-conducting field (`shell_loss_from_potential`, harmonic
+  form `shell_loss_from_br`, with the sleeve's J x B torque, `rotor_frame`).
+  `MaxwellSession.sleeve_lines` exports field quantities on arcs through the sleeve over a run,
+  `parse_line_report_csv` reads them and `sipm.validation.sleeve_shell_estimate` turns a
+  non-conducting export into the estimate.
+* **CLI / config**: `sipm composite --sigma-fibre S --sigma-transverse S` prints the axial
+  conductivity (per layer with `--layers`); `examples/configs/em_sleeve_loss.toml`; plot labels.
+* **Validation** (docs/validation.md section 13) and the limits of a 2D axial-current loss
+  (docs/methods.md 2.1): for hoop windings it is the across-fibre, axial-current part of the
+  loss only; for helical layers it over-counts by leaving out the end-return resistance.
+
 ### Layered sleeve, winding prestress, disc + N rings closed form
 
 * **Layered sleeve.** New parameter `sleeve_layers` (default '' = the single-layer sleeve, deck
@@ -70,7 +128,7 @@
   `coupled_pressure`; `sipm validate ring-liftoff` / `liftoff`. Validation (docs/validation.md
   section 11): FE against closed form on the ring 3e-6; on the bridge-retained rotor a direct run
   at the extrapolated speed opens the first element (about 0.5 %); on the bridgeless rotor the
-  linearity fails (8.7 % deviation, edges open at standstill when hot).
+  linearity fails (6.6 % deviation, edges open at standstill when hot).
 * `write_deck` gains the keyword `contact_elements` (default False). New point keys only when
   a new parameter leaves its default, so existing caches stay valid.
 
@@ -149,7 +207,7 @@
   `lip2_pole`, `lip2_q`; each reported as `svm_<name>`, plus `svm_lam_where`. Each section
   leaves out `stress_corner_margin` (0.5 mm) at its sharp end corners. All bridge-retained
   sections and the bridgeless `qhole` converge within 2 % between the two finest meshes; the
-  bridgeless lips do not (3-11 %, docs/validation.md section 3). The global lamination peak
+  bridgeless lips do not (3-10 %, docs/validation.md section 3). The global lamination peak
   stays as `svm_lam_max_all` (mesh-dependent). Plots name the quantity ("Max von Mises at named
   lamination sections").
 * Sample mechanical results re-solved with bonded magnets (`sample_mech_results.csv`, new

@@ -48,6 +48,7 @@ import numpy as np
 __all__ = [
     "Fibre", "Matrix", "Strength", "Lamina", "Laminate", "LayerStack",
     "lamina", "angle_ply", "layer_stack", "sleeve_params", "failure_indices", "ply_failure", "sleeve_failure",
+    "ply_axial_conductivity", "axial_conductivity",
     "FIBRES", "MATRICES", "STRENGTHS", "MODELS", "SLEEVE_KEYS", "CRITERIA",
 ]
 
@@ -214,7 +215,8 @@ def lamina(fibre: Fibre, matrix: Matrix, vf: float, model: str = "chamis") -> La
     ``model`` selects E2, G12, G23:
 
     ``"chamis"``  (C.C. Chamis, "Simplified composite micromechanics equations for hygral, thermal and
-        mechanical properties", SAMPE Quarterly 15(3):14-23, 1984; NASA TM-83320, 1983)::
+        mechanical properties", NASA TM-83320, 1983, presented at the SPI Reinforced Plastics/Composites
+        Institute annual conference, Houston, February 1983)::
 
             M = Mm / (1 - sqrt(vf) (1 - Mm/Mf))      with (Mf, Mm) = (Ef2, Em), (Gf12, Gm), (Gf23, Gm)
 
@@ -231,9 +233,9 @@ def lamina(fibre: Fibre, matrix: Matrix, vf: float, model: str = "chamis") -> La
             1/M = vf/Mf + vm/Mm
 
     Thermal expansion (all models; R.A. Schapery, "Thermal expansion coefficients of composite materials
-    based on energy principles", J. Compos. Mater. 2(3):380-404, 1968, written for a transversely isotropic
-    fibre; the fibre-anisotropy terms follow from the same 1D argument: common axial strain, zero transverse
-    stress in each phase)::
+    based on energy principles", J. Compos. Mater. 2(3):380-404, 1968, for isotropic phases; the
+    fibre-anisotropy terms follow from the same 1D argument: common axial strain, zero transverse stress
+    in each phase)::
 
         cte1 = (vf Ef1 af1 + vm Em am) / (vf Ef1 + vm Em)
         cte2 = vf (af2 + nuf12 af1) + vm (1 + num) am - cte1 nu12,       cte3 = cte2
@@ -440,7 +442,7 @@ def angle_ply(lam: Lamina, angle_deg: float) -> Laminate:
     through the radius) are homogenised with the exact layered-medium average: in-plane strains
     (hoop, axial, hoop-axial) and out-of-plane stresses (radial, axial-radial, hoop-radial) are common to
     the plies, and in-plane stresses and out-of-plane strains are thickness-averaged (C.T. Sun, S. Li,
-    "Three-dimensional effective elastic constants for thick laminates", J. Compos. Mater. 22:629-639,
+    "Three-dimensional effective elastic constants for thick laminates", J. Compos. Mater. 22(7):629-639,
     1988). This is done by partially inverting each ply law to [sig_I; eps_O] = H [eps_I; sig_O] + g dT,
     averaging H and g and inverting back. It is not a plain Voigt average of C: the out-of-plane couplings
     C36 and C45 change sign between the plies and the plain average is wrong by terms of second order in
@@ -537,6 +539,54 @@ def sleeve_params(x: Lamina | Laminate | LayerStack) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------------------------------------
+# electrical conductivity (2D sleeve eddy-current model)
+# ---------------------------------------------------------------------------------------------------------
+def ply_axial_conductivity(sigma_fibre: float, sigma_transverse: float, angle_deg: float) -> float:
+    """Axial (z) conductivity [S/m] of a unidirectional ply wound at ``angle_deg`` from the hoop direction.
+
+    In ply axes the conductivity tensor is diag(sigma_L, sigma_T, sigma_T) (1 = fibre; the ply is
+    transversely isotropic, so 2 and 3 conduct alike). With the fibre along f = (cos t, sin t) in
+    (hoop, axial), the in-plane tensor is sigma_T I + (sigma_L - sigma_T) f f^T, whose components are::
+
+        sigma_hoop,hoop   = sigma_L cos^2 t + sigma_T sin^2 t
+        sigma_axial,axial = sigma_L sin^2 t + sigma_T cos^2 t
+        sigma_hoop,axial  = (sigma_L - sigma_T) sin t cos t
+
+    The axial component is returned: t = 0 (hoop winding) gives sigma_T, t = 90 deg (axial fibre)
+    sigma_L. The off-diagonal term changes sign with t, so it cancels between the +t and -t plies of a
+    balanced winding, and the +/- pair has the same axial conductivity as one ply.
+    """
+    for name, v in (("sigma_fibre", sigma_fibre), ("sigma_transverse", sigma_transverse)):
+        if not (math.isfinite(v) and v >= 0):
+            raise ValueError(f"{name} must be finite and >= 0, got {v!r}")
+    if not 0.0 <= angle_deg <= 90.0:
+        raise ValueError(f"winding angle must be in [0, 90] deg, got {angle_deg!r}")
+    t = math.radians(angle_deg)
+    s, c = math.sin(t), math.cos(t)
+    return float(sigma_fibre * s * s + sigma_transverse * c * c)
+
+
+def axial_conductivity(sigma_fibre: float, sigma_transverse: float, angles_deg, fractions=None) -> float:
+    """Effective axial conductivity [S/m] of a (layered) +/- angle-ply sleeve.
+
+    Each layer conducts axially with :func:`ply_axial_conductivity` at its winding angle. The layers
+    are side by side for an axial current, i.e. in parallel under a common axial electric field, so
+    the effective value is the thickness-weighted mean ``sum(f_i sigma_zz,i)`` (``fractions``
+    normalised; None = equal shares). One fibre/matrix system for all layers (as ``sleeve_layers``).
+    The common-field assumption is the thin-sleeve, resistance-limited one under which the 2D model
+    is used (docs/methods.md, 2.1): the field then hardly varies through the sleeve thickness.
+    """
+    angles = [float(a) for a in np.atleast_1d(angles_deg)]
+    if not angles:
+        raise ValueError("axial_conductivity: need at least one layer angle")
+    w = np.ones(len(angles)) if fractions is None else np.asarray(fractions, dtype=float)
+    if len(w) != len(angles) or not (np.all(np.isfinite(w)) and np.all(w > 0)):
+        raise ValueError("axial_conductivity: need one finite fraction > 0 per layer")
+    w = w / w.sum()
+    return float(sum(wi * ply_axial_conductivity(sigma_fibre, sigma_transverse, a) for a, wi in zip(angles, w)))
+
+
+# ---------------------------------------------------------------------------------------------------------
 # failure criteria
 # ---------------------------------------------------------------------------------------------------------
 def _ratio(a, b):
@@ -558,19 +608,20 @@ def failure_indices(s1, s2, t12, strength: Strength, f12_star: float = -0.5) -> 
 
     ``max_stress``: max(s1/Xt or -s1/Xc, s2/Yt or -s2/Yc, |t12|/S). Linear, so sr = 1/index.
 
-    ``tsai_wu`` (S.W. Tsai, E.M. Wu, J. Compos. Mater. 5:58-80, 1971)::
+    ``tsai_wu`` (S.W. Tsai, E.M. Wu, "A general theory of strength for anisotropic materials",
+    J. Compos. Mater. 5(1):58-80, 1971)::
 
         F = F1 s1 + F2 s2 + F11 s1^2 + F22 s2^2 + F66 t12^2 + 2 F12 s1 s2
         F1 = 1/Xt - 1/Xc, F2 = 1/Yt - 1/Yc, F11 = 1/(Xt Xc), F22 = 1/(Yt Yc), F66 = 1/S^2
         F12 = f12_star sqrt(F11 F22),  f12_star = -1/2 by default (Tsai & Hahn, Introduction to Composite
-        Materials, 1980; the value that makes the quadric a generalised von Mises ellipse).
+        Materials, Technomic, 1980; the value that makes the quadric a generalised von Mises ellipse).
 
     ``tsai_wu`` is the quadratic F itself. ``tsai_wu_sr`` is the positive root R of
     (quadratic part) R^2 + (linear part) R = 1, solved in a cancellation-free form; both are 1 exactly on
     the envelope, but only 1/sr scales linearly with the load.
 
     ``hashin_fibre`` / ``hashin_matrix`` (Z. Hashin, "Failure criteria for unidirectional fiber composites",
-    J. Appl. Mech. 47:329-334, 1980, plane-stress form)::
+    J. Appl. Mech. 47(2):329-334, 1980, plane-stress form)::
 
         fibre,  s1 >= 0: (s1/Xt)^2 + (t12/S)^2        fibre,  s1 < 0: (s1/Xc)^2
         matrix, s2 >= 0: (s2/Yt)^2 + (t12/S)^2
@@ -579,6 +630,10 @@ def failure_indices(s1, s2, t12, strength: Strength, f12_star: float = -0.5) -> 
     St is ``strength.St`` or, if None, S (assumption). Their ``_sr`` solve the same quadratic in R as
     Tsai-Wu (= 1/sqrt(index) on the homogeneous branches).
     """
+    if not -1.0 < f12_star < 1.0:
+        # |f12*| >= 1 makes the Tsai-Wu quadric open (not an ellipsoid); its strength ratio is then
+        # undefined (negative discriminant -> nan) for some stress states
+        raise ValueError(f"f12_star must lie in (-1, 1) for a closed Tsai-Wu envelope, got {f12_star!r}")
     s1, s2, t12 = np.broadcast_arrays(*(np.asarray(v, dtype=float) for v in (s1, s2, t12)))
     X = strength
     St = X.S if X.St is None else X.St

@@ -45,8 +45,8 @@ CENTROID_TOL = 1e-6      # mm, element centroids of two runs of the same mesh mu
 # Largest deviation of a middle closed case's element pressure from the two-point line, relative
 # to that element's standstill pressure p0_e, accepted as linear. Measured (docs/validation.md
 # section 11): 2.8e-5 at a closed middle speed and 4e-4 at 0.95 x lift-off in the bridge-retained
-# rotor; 8.7 % in the bridgeless rotor, where the linearity fails. 1 % lies 25x above the former
-# and about 9x below the latter.
+# rotor; 6.6 % in the bridgeless rotor, where the linearity fails. 1 % lies 25x above the former
+# and about 7x below the latter.
 LINEARITY_TOL = 1e-2
 NOT_LINEAR_TOPOLOGIES = {
     "sleeved_bridgeless": "the sleeve contact of sleeved_bridgeless is not linear in speed (loose lamination "

@@ -1,0 +1,22 @@
+# Conducting carbon sleeve: 2D sleeve eddy-current loss (axial current) in the EM run.
+# The sleeve enters the 2D model only through its AXIAL conductivity
+#   sleeve_conductivity_axial = sigma_fibre sin^2(t) + sigma_transverse cos^2(t)   (t = winding angle from hoop)
+# so a hoop winding (t = 0) conducts axially only across the fibres. The two ply conductivities
+# below are ILLUSTRATIVE placeholders, not material data: measure your laminate.
+# What 2D can and cannot say: docs/methods.md, 2.1 (a hoop winding's along-fibre, circumferential
+# current and the end-return resistance are not in the model). Each point runs a lead-in plus two
+# loss periods (180 electrical degrees at the defaults), about three times a torque run.
+[sweep]
+name = "em_sleeve_loss"
+physics = "em"
+topology = "sleeved_bridged"
+
+[base]
+gamma = 130.0
+sleeve_fibre = "carbon_sm"        # needed for a winding angle other than 0
+sleeve_sigma_fibre = 2.0e4        # S/m along the fibre (illustrative)
+sleeve_sigma_transverse = 1.0e2   # S/m across the fibre (illustrative)
+
+[grid]
+sleeve_wind_angle = [0.0, 30.0, 60.0]
+em_rpm = [3000.0, 6000.0]

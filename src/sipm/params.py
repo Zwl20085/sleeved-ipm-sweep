@@ -47,6 +47,7 @@ CASE_SEPARATOR = "__"                     # per-case result column: <output>__<c
 # layered sleeve (sleeve_layers): limits that keep the deck and its mesh sane
 MAX_SLEEVE_LAYERS = 10
 MIN_LAYER_THICKNESS = 0.05                # mm, thinnest layer accepted
+SLEEVE_SIGMA_MAX = 1.0e8                  # S/m; sleeve conductivities above copper are rejected as unit errors
 # string fields that a TOML table may give as an array (joined with ',')
 LIST_STRING_FIELDS = ("mech_cases", "sleeve_layers", "sleeve_layer_prestress")
 
@@ -289,6 +290,22 @@ class Params:
                       "PM remanence (linear magnet). Paper: G52UH, 'higher than 1.40 T'")
     pm_mur: float = _f(1.05, "-", "illustrative", "PM recoil permeability")
     cu_conductivity: float = _f(5.8e7, "S/m", "illustrative", "Copper conductivity (AC-loss runs)")
+    sleeve_sigma_fibre: float = _f(0.0, "S/m", "illustrative",
+                                   "Sleeve ply electrical conductivity ALONG the fibre (sigma_L). With "
+                                   "sleeve_sigma_transverse it gives the axial conductivity of the sleeve "
+                                   "(sleeve_conductivity_axial = sigma_L sin^2 t + sigma_T cos^2 t per layer at "
+                                   "winding angle t from hoop, layers thickness-weighted), the only one a 2D model "
+                                   "with axial current uses. 0 and 0 (default) = non-conducting sleeve, model and "
+                                   "results unchanged; > 0 axial conductivity adds the 2D sleeve eddy-current loss "
+                                   "to EM runs (docs/methods.md, 2.1). Illustrative class statement only, not a "
+                                   "material property: carbon/epoxy is often quoted at 1e3-1e5 S/m along the fibre "
+                                   "and orders of magnitude lower across it; measure your laminate")
+    sleeve_sigma_transverse: float = _f(0.0, "S/m", "illustrative",
+                                        "Sleeve ply electrical conductivity ACROSS the fibre (sigma_T), set by "
+                                        "fibre-to-fibre contacts through the matrix; for a hoop-wound sleeve "
+                                        "(winding angle 0) it is the axial conductivity. Illustrative class "
+                                        "statement only: typically several orders of magnitude below sigma_L and "
+                                        "strongly process-dependent; measure your laminate")
 
     # ---- electromagnetic operating point / solver -----------------------------------------
     current_rms: float = _f(420.0, "A", "paper", "Phase current (rms); paper's full-load value")
@@ -593,6 +610,17 @@ class Params:
         return self.r_sleeve_out - self.sleeve_thickness
 
     @property
+    def sleeve_conductivity_axial(self) -> float:
+        """Axial electrical conductivity of the sleeve, S/m: each layer's ply value along z,
+        sigma_fibre sin^2 t + sigma_transverse cos^2 t at its winding angle t from hoop, thickness-
+        weighted over the layers (:func:`sipm.composite.axial_conductivity`). The EM model sees the
+        sleeve only through this number."""
+        from .composite import axial_conductivity
+
+        return axial_conductivity(self.sleeve_sigma_fibre, self.sleeve_sigma_transverse,
+                                  self.sleeve_layer_angles(), self.sleeve_layer_fractions())
+
+    @property
     def sleeve_nu_radial_hoop(self) -> float:
         """Minor Poisson ratio, from compliance symmetry."""
         return self.sleeve_nu_hoop_radial * self.sleeve_E_radial / self.sleeve_E_hoop
@@ -641,7 +669,7 @@ class Params:
                   "pm1_inner_offset", "pm2_inner_offset", "pm1_bridge_thickness", "pm2_bridge_thickness",
                   "pm1_end_gap", "pm2_end_gap", "pm_side_clearance", "pm_end_clearance", "pm_corner_radius",
                   "slot_fillet", "q_hole_fillet", "pm1_rib_half_width", "pm2_web_width", "min_web", "min_q_web",
-                  "pm1_slot_start", "pm2_slot_start", "lip_depth"]
+                  "pm1_slot_start", "pm2_slot_start", "lip_depth", "sleeve_sigma_fibre", "sleeve_sigma_transverse"]
         positive = ["stator_od", "stator_id", "slot_opening", "airgap", "slot_tip_depth", "slot_tip_angle",
                     "slot_width", "slot_depth", "cond_width", "cond_height", "cond_start_radius",
                     "stack_length", "pm1_width", "pm2_width", "pm1_d_crossing", "pm2_d_crossing",
@@ -767,6 +795,10 @@ class Params:
                 err.append("sleeve too thick: lamination OD is inside the bore")
             if self.em_span < self.em_step:
                 err.append("em_span must be >= em_step")
+            for n in ("sleeve_sigma_fibre", "sleeve_sigma_transverse"):
+                if getattr(self, n) > SLEEVE_SIGMA_MAX:
+                    err.append(f"{n} = {getattr(self, n):g} S/m exceeds {SLEEVE_SIGMA_MAX:g} S/m (above copper; "
+                               "wrong unit?)")
         if err:
             raise ValueError("Invalid parameters:\n  - " + "\n  - ".join(err))
 

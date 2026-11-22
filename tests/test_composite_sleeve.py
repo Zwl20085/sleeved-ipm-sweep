@@ -28,6 +28,8 @@ THERMAL_FIELDS = ("lam_cte", "pm_cte", "sleeve_cte_hoop", "sleeve_cte_radial", "
 LOAD_CASE_FIELDS = ("mech_cases", "overspeed_factor", "mech_temperature_cold")   # tests/test_load_cases.py
 LAYER_FIELDS = ("sleeve_layers", "sleeve_layer_prestress")   # tests/test_multilayer_sleeve.py
 NEW_FIELDS = THERMAL_FIELDS + SPEC_FIELDS + STRENGTH_FIELDS + LOAD_CASE_FIELDS + LAYER_FIELDS
+# EM fields (not mechanical-only), also omitted from the point key at default: tests/test_sleeve_eddy.py
+SIGMA_FIELDS = ("sleeve_sigma_fibre", "sleeve_sigma_transverse")
 
 
 # ---- 1. cache key ------------------------------------------------------------------------------
@@ -54,7 +56,7 @@ def test_variant_point_key_unchanged_from_main():
 
 
 def test_new_fields_omitted_only_at_default():
-    assert set(KEY_OMITTED_AT_DEFAULT) == set(NEW_FIELDS)
+    assert set(KEY_OMITTED_AT_DEFAULT) == set(NEW_FIELDS + SIGMA_FIELDS)
     p = default_params("sleeved_bridged")
     base = point_key(p, "mech")
     for q in (p.replace(mech_temperature=80.0), p.replace(sleeve_Xt=1500.0), p.replace(lam_cte=11e-6),

@@ -89,19 +89,23 @@ contact, bonded magnets (the designed 0.1 mm clearance bridged by the bond). Int
 | topology | headline `svm_lam_max` (MPa) | section, location r, theta | global lamination peak (MPa), location | magnet peak (MPa) | max sleeve hoop (MPa) | open sleeve contact | nodes | wall |
 |---|---|---|---|---|---|---|---|---|
 | sleeved_bridged | 253.3 | `qhole`, 54.42 mm, 22.35 deg | 691.1, 61.15 mm, 2.06 deg | 199.6 | 223.9 | 0 % | 25 160 | 22.7 s |
-| sleeved_bridgeless | 318.1 | `qhole`, 54.42 mm, 22.35 deg | 502.6, 60.33 mm, 1.23 deg | 220.9 | 236.6 | 0 % | 21 932 | 20.2 s |
+| sleeved_bridgeless | 318.1 | `qhole`, 54.42 mm, 22.35 deg | 502.6, 60.33 mm, 1.23 deg | 220.9 | 236.5 | 0 % | 21 633 | 16.8 s |
 
 These numbers were re-run after the thermal load case and the sleeve node export were added:
 with the default (equal) temperatures the deck writes no thermal commands and every result
-above is bit-identical. The new sleeve columns at these points: max radial tension
-`sr_sleeve_max` 0.02 MPa (bridge-retained) and 0.23 MPa (bridgeless), max |r-theta shear|
-`tau_sleeve_max` 1.6 and 6.0 MPa. With the bridge-retained rotor 100 K above the fitting
+above is bit-identical. The bridgeless row was re-run once more after its thin sleeve's bore
+arc was sized like the lamination OD (methods.md section 3, item 2): the headline, global and
+magnet peaks moved by less than 0.01 MPa, the sleeve hoop stress from 236.6 to 236.5 MPa, the
+contact pressure min / max from 0.850 / 4.784 to 0.832 / 4.865 MPa, 21 932 to 21 633 nodes. The
+new sleeve columns at these points: max radial tension `sr_sleeve_max` 0.02 MPa
+(bridge-retained) and 0.42 MPa (bridgeless; 0.23 before the bore-arc sizing), max |r-theta
+shear| `tau_sleeve_max` 1.6 and 3.8 MPa (bridgeless 6.0 before). With the bridge-retained rotor 100 K above the fitting
 temperature (default CTEs) the sleeve hoop stress rises from 223.9 to 356.6 MPa, the headline
 `svm_lam_max` from 253.3 to 274.3 MPa and the peak contact pressure from 4.57 to 8.42 MPa
 (`test_mech_point_thermal`).
 
 Section peaks (MPa): bridge-retained `bridge1` 103.9, `bridge2` 97.9, `rib1` 13.0, `web2` 76.4,
-`qhole` 253.3; bridgeless `lip1_pole` 6.3, `lip1_q` 3.9, `lip2_pole` 3.3, `lip2_q` 3.5, `qhole`
+`qhole` 253.3; bridgeless `lip1_pole` 6.7, `lip1_q` 4.0, `lip2_pole` 3.4, `lip2_q` 3.6, `qhole`
 318.1. The headline peak is at the apex fillet of the q-axis lightening hole, on the q-axis,
 in both rotors. The global peaks sit at sharp corners of the slot ends next to the bonded
 magnets (bridge-retained: a corner of the layer-1 inner relief; bridgeless: near the inner
@@ -137,18 +141,21 @@ Defaults, bonded magnets, 0.1 mm interference, 20000 rpm; global / fine element 
 
 | mesh (mm) | nodes | `lip1_pole` | `lip1_q` | `lip2_pole` | `lip2_q` | `qhole` | global lamination peak | magnet peak | max sleeve hoop | wall |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 0.8 / 0.3 | 9 751 | 4.4 | 3.8 | 2.5 | 3.8 | 315.9 | 359.7 | 206.8 | 234.1 | 9 s |
-| 0.5 / 0.15 (default) | 21 932 | 6.3 | 3.9 | 3.3 | 3.5 | 318.1 | 502.6 | 220.9 | 236.6 | 18 s |
-| 0.3 / 0.08 | 56 409 | 8.2 | 4.6 | 4.1 | 4.4 | 321.0 | 614.7 | 282.3 | 238.4 | 41 s |
-| 0.2 / 0.04 | 136 309 | 8.8 | 5.1 | 4.4 | 4.2 | 323.5 | 849.3 | 655.0 | 239.1 | 96 s |
-| change between the two finest | | +8.0 % | +10.8 % | +8.5 % | -3.2 % | +0.8 % | +38 % | +132 % | +0.3 % | |
+| 0.8 / 0.3 | 9 497 | 4.7 | 3.8 | 2.9 | 3.9 | 315.9 | 359.7 | 206.9 | 235.3 | 11 s |
+| 0.5 / 0.15 (default) | 21 633 | 6.7 | 4.0 | 3.4 | 3.6 | 318.1 | 502.6 | 220.9 | 236.5 | 18 s |
+| 0.3 / 0.08 | 56 188 | 8.2 | 4.6 | 4.2 | 4.4 | 321.0 | 614.7 | 282.3 | 237.8 | 40 s |
+| 0.2 / 0.04 | 136 117 | 8.9 | 5.1 | 4.3 | 4.2 | 323.5 | 849.2 | 655.0 | 239.0 | 64 s |
+| change between the two finest | | +7.5 % | +10.4 % | +3.1 % | -4.5 % | +0.8 % | +38 % | +132 % | +0.5 % | |
+
+(bridgeless rows re-run with the bore arc of the thin sleeve sized like the lamination OD,
+methods.md section 3, item 2; the bridge-retained rows are unchanged by it)
 
 (stresses in MPa)
 
 * **Converged (< 3 % between the two finest meshes):** every section of the bridge-retained
   rotor (0.4-1.8 %), the bridgeless `qhole` (0.8 %), the sleeve hoop stress of both rotors,
   and with them the headline `svm_lam_max` of both rotors (`qhole` at every mesh).
-* **Not converged: the four bridgeless lips** (3-11 %). Their peaks lie at the end of the
+* **Not converged: the four bridgeless lips** (3-10 %). Their peaks lie at the end of the
   section next to the lip root, a sharp corner, and keep rising as the mesh resolves its
   field. They are small (below 9 MPa, under 3 % of the headline value), so they do not affect
   `svm_lam_max`, but they are not reliable on their own.
@@ -466,7 +473,7 @@ relative to its standstill pressure):
 |---|---|---|---|---|---|
 | bridge-retained, 20 degC | 39 357, standstill + overspeed | 2.620 | 0.026 (1.0 %), 1 | 0.345, 0 | 2.8e-5 at 20000 rpm, 4.0e-4 at 0.95 x |
 | bridge-retained, 120 degC | 51 553, standstill + overspeed | 5.074 | 0.044 (0.9 %), 1 | 0.590, 0 | |
-| bridgeless, 20 degC | 23 937, standstill + rated (overspeed already open) | 1.126 | 0.340, 1 | 0.400, 1 | 8.7 % at 20000 rpm |
+| bridgeless, 20 degC | 23 591, standstill + rated (overspeed already open) | 1.136 | 0.398, 1 | 0.460, 1 | 6.6 % at 20000 rpm |
 | bridgeless, 120 degC | 0: open at standstill | | | | |
 
 Bridge-retained rotor: the linear model holds. At the extrapolated speed the governing element
@@ -483,16 +490,18 @@ the sleeve and the bonded magnets, and the OD has openings between them (11.39-1
 and 18.9 deg) are partly open: the pieces tilt under load, so the contact zone at each edge
 changes with speed and temperature. Cold, every element is closed at standstill and 20000 rpm and one
 edge element (12.6 deg) is partly open at 24000 rpm; the lines through standstill and 24000 rpm
-miss the pressures of the closed elements at 20000 rpm by up to 8.7 % of their standstill
+miss the pressures of the closed elements at 20000 rpm by up to 6.6 % of their standstill
 pressure, against 3e-5 in the bridge-retained rotor. The extrapolation from standstill and
-20000 rpm gives 23 937 rpm, but that edge element is already open at 0.95 x that speed
-(22 740 rpm): the true first opening lies below it. Hot (120 degC), two edge
-elements (11.2 and 18.9 deg) are already open at standstill, so the extrapolation gives 0 by the
-definition (first point of the interface to open), although those edges close again with speed (at
-20000 rpm hot every element is closed, minimum 1.45 MPa) and the third edge element (12.6 deg)
+20000 rpm gives 23 591 rpm, but that edge element is already open at 0.95 x that speed
+(22 411 rpm): the true first opening lies below it. Hot (120 degC), three edge
+elements (10.8, 11.2 and 18.9 deg) are already open at standstill, so the extrapolation gives 0 by
+the definition (first point of the interface to open), although those edges close again with speed
+(at 20000 rpm hot every element is closed, minimum 1.42 MPa) and the edge element at 12.6 deg
 opens only between 24000 and 42 300 rpm. The pressure is not monotonic in speed here, which no
-two-point line can represent. The bridgeless rows above were computed before this result was
-known; `liftoff_rpm_cold` / `_hot` are now NaN for `sleeved_bridgeless`, with the reason in
+two-point line can represent. The bridgeless rows were re-run after the bore arc of its thin
+sleeve was sized like the lamination OD (methods.md section 3, item 2; before: 23 937 rpm,
+1.126 / 0.340 / 0.400 MPa, 8.7 %, two edge elements open hot at standstill), with the NaN rule
+below bypassed to obtain them; `liftoff_rpm_cold` / `_hot` are now NaN for `sleeved_bridgeless`, with the reason in
 `liftoff_basis_*`. For this rotor read `contact_p_min__<case>` and
 `sleeve_open_fraction__<case>` instead.
 
@@ -500,7 +509,7 @@ known; `liftoff_rpm_cold` / `_hot` are now NaN for `sleeved_bridgeless`, with th
 the middle ones are compared with the two-point lines element by element and the basis is
 flagged above 1 % of the element's standstill pressure. In the six-case point above
 (standstill, rated and overspeed all closed) the rated case deviates by at most 2.8e-5 (cold),
-so no flag is set; the bridgeless rotor's 8.7 % would be flagged.
+so no flag is set; the bridgeless rotor's 6.6 % would be flagged.
 
 ## 12. Layered sleeve and winding prestress
 
@@ -617,3 +626,166 @@ Stresses in MPa, at 20000 rpm unless stated:
   (`sipm winding --tension 100 --set sleeve_fibre=carbon_sm sleeve_layers=0:1,0:1,0:1`) the
   equivalent prestresses are within 2 % of the winding stress, because the solid disc beneath
   is stiff; the slotted rotor gives way more, so the real relaxation is larger.
+
+**Bridgeless rotor** (`test_mech_point_multilayer_bridgeless`): the default 0.5 mm sleeve as
+hoop / +/-20 deg / hoop layers of 0.25 / 0.125 / 0.125 mm (carbon_sm/epoxy, vf 0.55), 0.1 mm
+interference, 50 MPa winding prestress, 20000 rpm, converged with every contact element closed,
+29 464 nodes, 26 s: `svm_lam_max` 316.1 MPa (`qhole`), sleeve hoop max per layer 286.2 / 197.7 /
+291.9 MPa, contact pressure min 1.343 MPa, Tsai-Wu safety factor 4.63 in the helical layer
+(6.98 / 6.85 in the hoop layers), interlaminar shear 3.55 MPa. Without the prestress: 318.5 MPa,
+233.3 / 148.4 / 244.0 MPa, 0.818 MPa, 6.16 (layer 2), 3.26 MPa; one carbon_sm hoop layer for
+comparison: 317.5 MPa, sleeve hoop 241.1 MPa, 1.122 MPa, 8.29. The interlaminar shear is larger
+than on the bridge-retained rotor (1.4 MPa), from the edges of the three loose lamination pieces.
+
+## 13. Sleeve eddy-current loss (2D, axial current)
+
+Default bridge-retained rotor (1.5 mm sleeve), 420 A rms, gamma = 130 deg, 3000 rpm,
+`em_step` = 2 deg unless stated. The sleeve's axial conductivity is set through
+`sleeve_sigma_transverse` with a hoop winding (axial conductivity = sigma_T): 1e4 S/m at the
+check point, 1e5 and 1e6 S/m for the scaling. These are test values that span the range, not
+material data. What the 2D loss means and leaves out: methods.md section 2.1. Each conducting
+run simulates 180 electrical degrees (lead-in plus two loss periods), 123-165 s per run at
+`em_step` = 2 deg including the model build (254 s at 1 deg, 449 s at 0.5 deg), against 69.5 s
+for the torque run. The field exports of (c) took 6-8 min per run (17 min with 721 points per
+arc), mostly in the line reports.
+
+**(a) Non-conducting path unchanged.** Default point after the change: 334.3668 N m, ripple
+0.1221, 69.5 s, as in section 6 (334.37 N m, 0.122). The default model, its cache keys
+(`tests/test_sleeve_eddy.py` pins `em_model_key` against the previous code, the point keys were
+already pinned) and its outputs are those of earlier versions.
+
+**Setting eddy effects.** The first conducting run gave `SolidLoss` = 0 and the torque of the
+non-conducting model to 1e-7: PyAEDT's `eddy_effects_on` lists only materials of at least
+1e5 S/m as conductors and silently left the 1e4 S/m sleeve out of the eddy-effect table (read
+back from the saved project). The driver sets it directly (`SetEddyEffect`) and reads it back
+(`GetEddyEffect`).
+
+**Net current.** Three versions of the conducting sleeve at 1e4 S/m (`em_step` 2 deg,
+120-degree runs of the same model):
+
+| sleeve object | loss (W) | torque (N m) |
+|---|---|---|
+| eddy effects on, no winding (the driver's model) | 5.05602 | 334.35253 |
+| solid voltage winding, 0 V | 5.05602 | 334.35253 |
+| solid current winding, 0 A (zero net current in the modelled pole) | 4.58187 | 334.35388 |
+
+A passive eddy object in Maxwell 2D carries a free net current, exactly as if shorted by a
+resistance-free return (0 V). For the ring sleeve that is right: the odd periodicity makes the
+current anti-periodic over a pole pitch, so the ring total is zero whatever one pole carries.
+Forcing zero net current per pole removes 9.4 % of the loss. The thin-shell estimate (c)
+reproduces both versions. On the conducting result itself, `Jz` exported on the mid-radius arc
+over the run is anti-periodic across the pole (mismatch 8e-9 of the peak), and the net current
+of the modelled pole is not zero: up to 1.30 A (rms 0.55 A) against a mean 1.57 A of the
+integral of |Jz| over the pole cross-section, alternating from pole to pole, so the ring total
+is zero. (Arcs on the sleeve bore and OD are unusable for `Jz`: they lie on the material
+interface, where the element current density jumps.)
+
+**Start-up and averaging.** The loss waveform repeats with the 60-degree period from the first
+time step on; only Maxwell's t = 0 sample (a static solution without eddy current) differs. The
+change of the period average from the second to the third period (`sleeve_loss_rel_change`) is
+7e-6 to 1.1e-5 in every run below.
+
+**Mesh and time step** (1e4 S/m):
+
+| sleeve mesh (mm) | `em_step` (deg) | steps per slot period | loss (W) | torque (N m) |
+|---|---|---|---|---|
+| 1.2 (`mesh_rotor`, default) | 2 | 15 | 5.0561 | 334.3526 |
+| 0.3 | 2 | 15 | 5.0577 | 334.1282 |
+| 1.2 | 1 | 30 | 5.1064 | 334.3523 |
+| 1.2 | 0.5 | 60 | 5.1199 | 334.3522 |
+
+The sleeve mesh hardly matters for the loss (0.03 %); refining it moves the torque by 0.07 %
+through the changed mesh alone, so a conducting model keeps the non-conducting mesh and differs
+from it only by the conductivity. The time step matters more: the loss rises by 0.99 % from 2 to
+1 deg and by 0.26 % from 1 to 0.5 deg, a ratio of 3.7 (about second order), which extrapolates
+to 5.125 W. The default `em_step` of 2 deg (15 steps per slot-passing period, independent of
+speed) is therefore about 1.3 % low, 1 deg about 0.4 %. Runs with fewer than 15 steps per slot
+period are refused; use `em_step` = 1 for sub-percent loss. The skin depth at the slot-passing
+frequency (2400 Hz) is 103 mm at 1e4 S/m and 10.3 mm at 1e6 S/m, 7 to 68 times the sleeve
+thickness and far above the 1.2 mm mesh.
+
+**(b) Scaling.** Loss against conductivity at 3000 rpm and against speed at 1e4 S/m, fixed
+current and current angle:
+
+| sigma axial (S/m) | speed (rpm) | loss (W) | ratio to previous row | exponent | loss / shaft power | torque (N m) |
+|---|---|---|---|---|---|---|
+| 0 | 3000 | - | | | | 334.3668 |
+| 1e4 | 3000 | 5.0561 | | | 4.8e-5 | 334.3526 |
+| 1e5 | 3000 | 49.891 | 9.868 | 0.994 | 4.8e-4 | 334.2273 |
+| 1e6 | 3000 | 432.39 | 8.667 | 0.938 | 4.1e-3 | 333.1687 |
+| 1e4 | 6000 | 20.199 | 3.995 (to 1e4, 3000 rpm) | 1.998 (speed) | 9.6e-5 | 334.3385 |
+
+The loss is proportional to sigma within 1.3 % up to 1e5 S/m (exponent 0.994) and to the speed
+squared (exponent 1.998): the resistance-limited regime. From 1e5 to 1e6 S/m the exponent falls
+to 0.938: the sleeve currents begin to screen the harmonics (shell reaction), although the skin
+depth is still 7 times the thickness. Above about 1e5 S/m at this speed the thin-shell estimate
+(c), which assumes an unscreened field, is no longer valid, while the FE loss is.
+
+**Torque.** The conducting sleeve lowers the torque by 0.0142, 0.1395 and 1.198 N m at 1e4,
+1e5 and 1e6 S/m, linear in sigma like the loss and 0.88, 0.88 and 0.87 times the loss over the
+mechanical speed (P / Omega = 0.0161, 0.1588, 1.376 N m). The drop need not be P / Omega: with
+current-driven windings the electromagnetic power the stator delivers, sum <i dpsi/dt>, changes
+too, and over a period sum <i dpsi/dt> = T Omega + P. At 1e5 S/m, with dpsi/dt from the
+exported flux linkages (central differences) and the imposed currents (Maxwell's `Current`
+report returns 0 for these windings), the stator power rises by 14.6 W and T Omega falls by
+43.8 W, against a loss of 49.9 W: the balance closes to 8.5 W. That is within the accuracy of
+this voltage-based power, which misses T Omega by 104 W (0.1 %) already for the non-conducting
+model, so it supports the reading (part of the loss is supplied electrically) without proving
+the 0.88. At no load, where the stator exchanges no power, the drop is P / Omega within 3 %
+(below). In the harmonic form of (c) the sleeve's own J x B torque is 0.71 P / Omega at load and
+0.92 P / Omega at no load: the eddy field also changes the force on the rotor iron and magnets,
+so the sleeve force alone is not the rotor torque change. At realistic carbon conductivities the
+torque change is far below the 0.07 % mesh sensitivity of the torque.
+
+**(c) Independent estimate.** From the non-conducting model (same mesh, same time step, fields
+saved at every step) the vector potential A_z (`Flux_Lines`) was exported on five arcs through
+the sleeve (bore, quarter, middle, three quarters, OD), 0 to 45 deg, over the run
+(`MaxwellSession.sleeve_lines`). The modelled pole was extended to the full ring by the odd
+periodicity (seam mismatch 4e-8 of the peak), resampled into the rotor frame and the
+resistance-limited thin-shell loss evaluated over the last loss period
+(`sipm.validation.sleeve_shell_estimate` with `sipm.eddy.shell_loss_from_potential`, methods.md
+section 2.1), with the time derivative taken as Maxwell takes it (backward difference) and zero
+total current over the ring:
+
+| case | FE loss (W) | estimate (W) | FE / estimate |
+|---|---|---|---|
+| load, default mesh, zero ring current (the driver's model) | 5.0561 | 5.0923 | 0.993 |
+| load, default mesh, zero current per pole (FE: 0 A winding) | 4.5819 | 4.6116 | 0.994 |
+| load, sleeve mesh 0.3 mm, zero ring current | 5.0577 | 5.0943 | 0.993 |
+| no load, default mesh, zero ring current | 0.06244 | 0.06398 | 0.976 |
+
+The first row is re-run from the package by `sipm validate sleeve-loss` (`--sigma`, default
+1e4 S/m; `sipm.validation.sleeve_loss_check`, `test_sleeve_loss_check`): the conducting run, then
+the non-conducting model with A_z on the five arcs and the estimate. Re-run: FE 5.0561 W (change
+over the last period 8.1e-6), estimate 5.0923 W, FE / estimate 0.9929; variants 4.6115 W (zero
+current per pole), 4.9115 W (central differences), 4.8085 W (harmonic form), seam mismatch 1.6e-8.
+
+The FE loss and the estimate agree within 1 % at load and 2.4 % at no load (where the loss is
+80 times smaller and made of higher harmonics), for both net-current conditions; the ratio is
+the same for both, so the effect of the per-pole constraint is reproduced. The B_r recovered from
+the exported A_z peaks at 1.19 T in the sleeve, as the `Mag_B` line report there (1.18 T), which
+confirms that `Flux_Lines` is A_z in Wb/m.
+Variants of the estimate from the same export (load, default mesh) show its own discretisation
+spread: central instead of backward time differences 4.912 W, and the harmonic formula from B_r
+at the mid radius (`shell_loss_from_br`, spectral derivatives, field taken as uniform through
+the thickness) 4.809 W, 3.5 % and 5.6 % below the backward-difference value. The backward
+difference is the one consistent with the solver's time stepping, which is why it is the
+comparison above; the variants say that, at this time step, the estimate itself is good to a
+few per cent, and the FE step study shows the loss converging upwards with finer steps.
+The largest contributions of the harmonic form (rotor frame, load): order 44 at 2400 Hz (the
+slot harmonic, 40 % of the loss), order 4 at 2400 Hz (15 %), order 20 at 1200 Hz (14 %), order 12
+at 1200 Hz (10 %).
+
+**Load against no load** (1e4 S/m, 3000 rpm): 5.0561 W at 420 A rms, 0.0624 W at zero current.
+The no-load loss, from the slotting of the magnet field alone (orders 44 and 52 at 2400 Hz), is
+1.2 % of the load loss: in this machine, with 1.9 mm slot openings, the sleeve loss comes from the
+armature field, the winding harmonics and the slot harmonics of the stator current. At no load
+the stator exchanges no power, so the torque must fall by exactly P / Omega = 1.99e-4 N m; the
+FE gives a mean torque of -1.93e-4 N m (the cogging torque of the non-conducting model averages
+to 0.000 N m, section 5).
+
+**Bridgeless rotor** (`test_em_point_conducting_sleeve_bridgeless`, 0.5 mm sleeve, 1e4 S/m,
+420 A rms, gamma = 130 deg, 3000 rpm): loss 3.352 W (change over the last period 3e-7), torque
+497.6629 to 497.6536 N m, a drop of 0.0093 N m = 0.87 P / Omega, as on the bridge-retained
+rotor; skin depth 205 times the sleeve thickness. The non-conducting torque is that of
+section 6 (497.66 N m).

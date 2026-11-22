@@ -103,7 +103,8 @@ def test_schapery_cte_independent_derivation():
 
 def test_halpin_tsai_published_value():
     """Halpin-Tsai E2 of glass/epoxy, Ef = 85 GPa, nuf = 0.2, Em = 3.4 GPa, num = 0.3, vf = 0.7 (xi = 2):
-    20.20 GPa, the textbook value (Kaw, Mechanics of Composite Materials, ch. 3)."""
+    20.20 GPa, quoted as a textbook value (attributed to Kaw, Mechanics of Composite Materials, 2nd ed.,
+    2006; not checked against the book). The assertion is the Halpin-Tsai formula evaluated by hand."""
     g = Fibre(E1=85.0, E2=85.0, G12=85.0 / 2.4, nu12=0.2, nu23=0.2, density=2500.0, cte1=5e-6, cte2=5e-6)
     m = Matrix(E=3.4, nu=0.3, density=1200.0, cte=60e-6)
     lam = lamina(g, m, 0.7, "halpin_tsai")
@@ -141,7 +142,8 @@ def test_bond_matrix_properties():
 
 
 def _qbar_closed_form(E1, E2, nu12, G12, th_deg):
-    """Jones, Mechanics of Composite Materials, eq. 2.85 (reduced stiffness of an off-axis lamina)."""
+    """Transformed reduced stiffness Qbar of an off-axis lamina (the standard formulas, e.g. R.M. Jones,
+    Mechanics of Composite Materials, 2nd ed., 1999, ch. 2)."""
     nu21 = nu12 * E2 / E1
     d = 1 - nu12 * nu21
     Q11, Q22, Q12, Q66 = E1 / d, E2 / d, nu12 * E2 / d, G12
@@ -174,7 +176,7 @@ def test_rotation_matches_closed_form_qbar():
 def test_published_off_axis_example():
     """Graphite/epoxy E1 = 181, E2 = 10.3, G12 = 7.17 GPa, nu12 = 0.28 at 60 deg:
     Qbar = [[23.65, 32.46, 20.05], [32.46, 109.4, 54.19], [20.05, 54.19, 36.74]] GPa, the worked example
-    of an off-axis lamina in Kaw, Mechanics of Composite Materials, 2nd ed. (CRC 2006), ch. 2 (recalled
+    of an off-axis lamina attributed to Kaw, Mechanics of Composite Materials, 2nd ed. (2006) (recalled
     from memory, not checked against the book). The values are reproduced independently by the
     closed-form reduced stiffness of :func:`_qbar_closed_form` (Jones' transformation formulas)."""
     lam = Lamina(E1=181.0, E2=10.3, E3=10.3, nu12=0.28, nu13=0.28, nu23=0.4, G12=7.17, G13=7.17,
@@ -467,3 +469,12 @@ def test_sleeve_failure_angle_ply_uses_ply_stresses():
         assert np.array_equal(out[k], ref[k])
     # the hoop-axial shear in the 30 deg plies is not zero, unlike the homogenised stress
     assert abs(plus[0, 5]) > 1.0
+
+
+@pytest.mark.parametrize("f12", [-1.0, 1.0, -1.5, 2.0])
+def test_tsai_wu_interaction_outside_closed_envelope_rejected(f12):
+    with pytest.raises(ValueError, match="f12_star"):
+        failure_indices(100.0, -150.0, 10.0, STRENGTHS["carbon_sm_epoxy"], f12_star=f12)
+    # just inside, the strength ratio is finite for a biaxial state the open quadric would miss
+    fi = failure_indices(100.0, -150.0, 10.0, STRENGTHS["carbon_sm_epoxy"], f12_star=0.999 * np.sign(f12))
+    assert np.isfinite(fi["tsai_wu_sr"]) and fi["tsai_wu_sr"] > 0

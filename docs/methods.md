@@ -236,8 +236,9 @@ openings), which the test checks exactly instead.
   the 27SW1400 grade named in the paper, whose data are not shipped), user curve via
   `lam_bh="path.csv"` or an AEDT library material via `lam_bh="aedt:<name>"`; magnets =
   linear, `pm_br` (1.40 T, the paper says G52UH has "higher than 1.40 T"), `pm_mur` 1.05,
-  non-conducting; sleeve = non-magnetic, non-conducting; no eddy currents anywhere in
-  torque runs, no iron loss, no temperature dependence, no end effects, no skew.
+  non-conducting; sleeve = non-magnetic and, by default, non-conducting (a conducting sleeve:
+  2.1); no other eddy currents in torque runs, no iron loss, no temperature dependence, no
+  end effects, no skew.
 
 **AC loss factor (optional).** `MaxwellSession.ac_loss` re-builds the model with solid
 conductors (eddy effects on, series connection enforced by the current-driven solid
@@ -245,6 +246,142 @@ winding), runs 1.5 electrical periods at the requested speed and reports
 `Kac = p_ac / p_dc`, where `p_ac` is the mean of Maxwell's `SolidLoss` over the last
 period and `p_dc = slots x layers x (I_rms / parallel_paths)^2 R_dc` with
 `R_dc = stack_length / (sigma A_conductor)`. Both refer to the active length only.
+
+### 2.1 Sleeve eddy-current loss (2D, axial current)
+
+Carbon fibre conducts, so the slot and winding harmonics that move relative to the rotor drive
+eddy currents in the sleeve, a rotor loss next to the magnets. The model stays 2D. This section
+says what that 2D loss is and what it is not.
+
+**Conductivity.** A unidirectional ply conducts along the fibre with `sigma_L`
+(`sleeve_sigma_fibre`) and across it with `sigma_T` (`sleeve_sigma_transverse`); the ply is
+transversely isotropic, so the through-thickness value is `sigma_T` too. With the fibre at angle
+t from the hoop direction, f = (cos t, sin t) in (hoop, axial), the in-plane tensor is
+`sigma_T I + (sigma_L - sigma_T) f f^T`:
+
+    sigma_hoop,hoop   = sigma_L cos^2 t + sigma_T sin^2 t
+    sigma_axial,axial = sigma_L sin^2 t + sigma_T cos^2 t
+    sigma_hoop,axial  = (sigma_L - sigma_T) sin t cos t
+
+The off-diagonal term changes sign with t and cancels between the two plies of a balanced
++/- t winding. The 2D model carries only axial (z) current, so it sees the sleeve only through
+`sigma_axial,axial`: for a hoop winding (t = 0) that is `sigma_T`, the across-fibre value; for
+fibres along the axis (t = 90 deg) `sigma_L`. The layers of `sleeve_layers` lie side by side
+for an axial current and see the same axial field (thin, resistance-limited sleeve), so they are
+in parallel: the effective value is the thickness-weighted mean of the layer values
+(`sipm.composite.axial_conductivity`, `Params.sleeve_conductivity_axial`). The Maxwell model
+keeps one homogeneous sleeve object with this value.
+
+Both conductivities default to 0: the sleeve does not conduct, and the model, the cache keys
+and every result are those of earlier versions. No conductivity is shipped as a material
+property. As a class statement only, for orientation: carbon/epoxy laminates are often quoted
+at 1e3-1e5 S/m along the fibre and orders of magnitude lower, strongly process-dependent,
+across it. Measure the laminate you use.
+
+**Cache keys.** The two conductivities are left out of the sweep point key while they are 0
+(`sipm.sweep.KEY_OMITTED_AT_DEFAULT`). The Maxwell model key (`em_model_key`) leaves them out
+always and adds the derived axial conductivity when it is > 0. The winding angle and the layer
+spec stay mechanical-only fields of that key: they change the EM model only through the axial
+conductivity, which is in the key. So a non-conducting sleeve, whatever its winding, keeps its
+old key; two specs with the same axial conductivity share one Maxwell model; ply values that
+give no axial conductivity (a hoop winding with `sigma_T = 0`) leave the model unchanged and
+report a 2D loss of exactly 0.
+
+**Maxwell model.** With `sleeve_conductivity_axial > 0`, an `em` run:
+
+* sets the sleeve material conductivity and switches eddy effects on for the Sleeve object
+  (directly through `SetEddyEffect`; PyAEDT's `eddy_effects_on` only lists materials of at least
+  1e5 S/m as conductors and silently skips a carbon sleeve below that);
+* keeps the mesh of the non-conducting model (sleeve at `mesh_rotor`), so the two models differ
+  only by the conductivity: a 0.3 mm sleeve mesh changed the loss by 0.03 % at the check point
+  but shifted the torque by 0.07 % through the changed mesh alone (docs/validation.md, 13);
+* simulates a lead-in of one loss period plus `max(2, ceil(em_span / 60))` loss periods
+  (180 electrical degrees at the defaults, three times a torque run), with the time step
+  `em_step`;
+* reports `torque_avg`, `torque_max`, `torque_min`, `torque_ripple` over the last `em_span`
+  degrees, as a torque run does, and the sleeve loss.
+
+*Net current.* The sleeve is a full ring whose axial current returns through the sleeve at its
+ends. With an ideal (resistance-free) end return the only constraint is zero total current
+through the ring's cross-section. The model holds one pole with odd periodicity, so the sleeve
+current density is anti-periodic over a pole pitch and the ring total is zero by symmetry; the
+modelled pole carries a net current of alternating sign from pole to pole. No constraint is
+needed, and none is added. Maxwell 2D leaves the net current of an eddy-enabled object that is
+not part of a winding free (`E_z = -dA/dt`, no added uniform field): such a run gave the same
+loss to 1e-7 as the sleeve made a 0 V solid voltage winding. A zero-current constraint on a
+passive solid is available (a 0 A solid current winding), but on the one-pole sector it imposes
+zero net current per pole, which the ring does not have: it removed 9 % of the loss at the
+check point. The thin-shell estimate below reproduces both cases (docs/validation.md, 13).
+
+*Loss and its average.* Only the sleeve is a solid conductor, so Maxwell's `SolidLoss` is the
+sleeve loss, for the whole machine (symmetry multiplier = poles) and the stack length. In the
+rotor frame every field quantity of an integer-slot winding with balanced sinusoidal currents
+repeats after one phase belt, 60 electrical degrees (advancing the rotor by q slots maps the
+slots and the current pattern onto themselves), and so does the loss
+(`sipm.eddy.loss_period_deg`). `sleeve_loss_w` is the time average over the last such period
+(trapezoid rule, `sipm.eddy.period_average`), `sleeve_loss_rel_change` its relative change from
+the period before (the convergence check of the average), `sleeve_loss_frac` = loss / shaft
+power with shaft power = `torque_avg` x mechanical angular speed (NaN at zero or negative
+torque). The start-up transient is short: Maxwell's t = 0 sample is a static solution without
+eddy current, and from the first step on the loss waveform repeats with the 60-degree period to
+1e-5 at the check points.
+
+*Resolution.* `sleeve_skin_depth_mm` is the skin depth at the slot-passing frequency seen from
+the rotor, f_s = slots x rpm / 60 (2400 Hz at 3000 rpm), and `sleeve_skin_ratio` that depth over
+the sleeve thickness; `sleeve_mesh_mm` and `sleeve_steps_per_slot` (time steps per slot-passing
+period = 30 deg / `em_step`, independent of speed because `em_step` is in electrical degrees)
+are reported with it. A conducting run is refused when the mesh is coarser than half the skin
+depth or when there are fewer than `MIN_STEPS_PER_SLOT` = 15 steps per slot period. The
+`em_step` default of 2 deg, chosen for torque, gives exactly 15 and resolves the loss to about
+1.3 % (measured against 1 and 0.5 deg, about second order in the step); `em_step` = 1 deg gives
+about 0.4 % and doubles the run time (docs/validation.md, 13). The skin depth matters only for
+much higher conductivities: at 1e4 S/m and 2400 Hz it is about 100 mm, against a 1.5 mm sleeve,
+and the departure from the resistance-limited regime (the shell reaction) sets in before the
+skin depth approaches the thickness (exponent 0.94 from 1e5 to 1e6 S/m with the skin depth still
+7 times the thickness).
+
+*Torque.* The eddy currents brake the rotor. Over a period the power balance is
+sum <i dpsi/dt> = T Omega + P (the stored field energy is periodic): at no load the stator
+delivers no power and the torque falls by exactly P / Omega; under load the current-driven
+stator's electromagnetic power changes too and supplies part of the loss, so the torque falls by
+less (0.88 P / Omega at the check point, linear in sigma like the loss). At realistic carbon
+conductivities the change is far below the torque resolution of the model
+(docs/validation.md, 13).
+
+**Resistance-limited loss and the thin-shell estimate.** If the sleeve's own currents do not
+change the field (thin compared with the skin depth and a small shell reaction; the
+proportionality of the loss to sigma checks it), the rotor-frame field is that of the
+non-conducting model. With axial current only, `E_z = -dA/dt + C(t)` in the rotor frame,
+`J_z = sigma E_z`, and zero total current fixes the uniform field to the cross-section mean,
+`C = <dA/dt>`:
+
+    P = sigma L  int int (dA/dt - <dA/dt>)^2 r dtheta dr        (time average)
+
+(`sipm.eddy.shell_loss_from_potential`; L = stack length, the integral over the full ring and
+the sleeve thickness). In harmonic form, a rotor-frame harmonic of the radial flux density
+`B_r = c_nk exp(i(n theta + w_k t))` has `A = r c_nk / (i n)` and `E = -w_k r c_nk / n`, so for a
+sleeve of thickness d at mean radius r_m
+
+    P = sigma L d 2 pi r_m  sum_{n != 0} sum_k (w_k r_m / n)^2 |c_nk|^2
+
+(`sipm.eddy.shell_loss_from_br`). The n = 0 term is absent: B_r has no ring mean, and the ring
+mean of E is exactly what zero total current removes. The loss is proportional to sigma and,
+at fixed current and current angle, to the speed squared. This is the independent estimate the
+FE loss is checked against in docs/validation.md, 13.
+
+**What 2D cannot say.** The 2D model has axial current only and no end region:
+
+* In a **hoop-wound sleeve** the easy path is circumferential, along the fibres. The 2D model
+  contains only the axial, across-fibre current of that sleeve (`sigma_T`) and nothing of the
+  along-fibre currents that close circumferentially, so for hoop windings it gives the
+  axial-current part of the loss, not the total, which may be much larger.
+* In a **helical (angle-ply) layer** the axial conductivity is larger, and the 2D model assumes
+  every axial current filament returns through a resistance-free end. The real return runs
+  circumferentially through the sleeve's end regions and adds resistance, so the 2D loss
+  over-counts for such layers by omitting the end return.
+* No 3D or end-effect correction is applied. `sleeve_loss_w` is the 2D axial-current loss of
+  the active length, with ideal end return, of a homogeneous sleeve with the axial conductivity
+  above; it excludes PWM and current-ripple harmonics, magnet eddy loss and any thermal coupling.
 
 ## 3. Mechanical model (`sipm.mapdl`)
 
@@ -257,7 +394,13 @@ The deck is plain APDL, written by Python, run in batch, and post-processed into
 2. **2D plane stress** by default (`plane="strain"` available), PLANE183, free triangular
    mesh, `mech_mesh` globally, `mech_mesh_fine` on all lines shorter than 3 mm (fillets,
    bridges, rib, lug faces), at least three quadratic elements through the sleeve (a layered
-   sleeve: at least two through every layer, section 4.6).
+   sleeve: at least two through every layer, section 4.6). Where that makes the sleeve's element
+   size finer than `mech_mesh` on the bridgeless rotor (its default 0.5 mm sleeve), the sleeve bore
+   arc, the target of the sleeve contact, keeps the lamination's size `mech_mesh`, as for a
+   layered sleeve: with the finer target the contact pressure rippled along the interface
+   (validation.md section 2). The bridge-retained rotor's decks are not changed by this rule: at
+   its default 1.5 mm sleeve the two sizes are equal anyway, while a thinner sleeve there (below
+   3 x `mech_mesh`) keeps the finer target, so its published results stay as they are.
 3. **Materials:** linear elastic, small deformation (`NLGEOM,OFF`), isotropic lamination
    and magnets (Table II). The sleeve is cylindrically orthotropic: element axes come from
    a local cylindrical system (`ESYS`), x = radial, y = hoop, z = axial (see section 4). A
@@ -400,7 +543,7 @@ the linearity add a flag to it while the value is still reported: a case that is
 the extrapolated speed, and, when three or more fully closed speeds exist at the temperature,
 a middle one whose element pressures deviate from the two-point lines by more than 1 % of the
 element's standstill pressure (`loadcases.LINEARITY_TOL`; measured: 3e-5 in the bridge-retained
-rotor, 8.7 % in the bridgeless one).
+rotor, 6.6 % in the bridgeless one).
 The closed form of the disc + ring (`sipm.analytic.liftoff_speed`, with temperature) uses the
 same superposition, p0 from interference and temperature at standstill and c from the
 centrifugal load alone. Validation: validation.md section 11. The linearity holds for the
@@ -429,8 +572,8 @@ nu13 = nu12, G13 = G12, nu23 = E2/(2 G23) - 1). E1, nu12 and the density follow 
 mixtures in every model. `sleeve_micromechanics` selects the transverse and shear constants:
 
 * `chamis` (default): Chamis' simplified micromechanics equations, M = Mm / (1 - sqrt(vf)
-  (1 - Mm/Mf)) for E2, G12 and G23 (C.C. Chamis, SAMPE Quarterly 15(3):14-23, 1984; NASA
-  TM-83320, 1983);
+  (1 - Mm/Mf)) for E2, G12 and G23 (C.C. Chamis, NASA TM-83320, 1983, presented at the
+  SPI Reinforced Plastics/Composites Institute annual conference, Houston, February 1983);
 * `halpin_tsai`: the Halpin-Tsai equations with xi = 2 for E2 and xi = 1 for G12 and G23
   (J.C. Halpin, J.L. Kardos, Polym. Eng. Sci. 16(5):344-352, 1976; xi = 1 for G23 is a choice,
   Halpin-Tsai has no canonical value there);
@@ -448,7 +591,7 @@ direction in the hoop-axial surface (0 = hoop winding). `angle_ply` rotates the 
 stiffness about the radial axis by +theta and -theta and homogenises the two plies as a
 layered medium: in-plane strains (hoop, axial, hoop-axial) and out-of-plane stresses
 (radial and the two transverse shears) are common to the plies, the other components are
-thickness averages (C.T. Sun, S. Li, J. Compos. Mater. 22:629-639, 1988). For a balanced
+thickness averages (C.T. Sun, S. Li, J. Compos. Mater. 22(7):629-639, 1988). For a balanced
 winding the result is orthotropic in the cylinder axes, so the deck needs no change. Its
 Poisson ratios can lie outside [0, 0.5) (near +/-30 deg nu_hoop_axial exceeds 1 and
 nu_hoop_radial is negative), which is physical for a laminate. Parameter validation therefore
@@ -492,8 +635,8 @@ criteria are evaluated on both transverse planes, (s11, s22, t12) and (s11, s33,
 the same strengths, and the worse is reported. This relies on the ply's transverse isotropy;
 it ignores t23 and the interaction of s22 with s33, i.e. it is not a 3D criterion. The
 criteria (`sipm.composite.failure_indices`): maximum stress; Tsai-Wu with F12* = -1/2
-(S.W. Tsai, E.M. Wu, J. Compos. Mater. 5:58-80, 1971); Hashin's plane-stress fibre and matrix
-modes (Z. Hashin, J. Appl. Mech. 47:329-334, 1980), with the transverse shear strength of the
+(S.W. Tsai, E.M. Wu, J. Compos. Mater. 5(1):58-80, 1971); Hashin's plane-stress fibre and matrix
+modes (Z. Hashin, J. Appl. Mech. 47(2):329-334, 1980), with the transverse shear strength of the
 matrix-compression mode taken equal to `sleeve_S`. Outputs: `sleeve_fi_max_stress`,
 `sleeve_fi_tsai_wu`, `sleeve_fi_hashin_fibre`, `sleeve_fi_hashin_matrix` (maximum over the
 sleeve corner nodes, >= 1 = failure) and `sleeve_sf`, the minimum Tsai-Wu strength ratio
