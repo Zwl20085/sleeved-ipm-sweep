@@ -177,6 +177,9 @@ failed. AEDT is restarted every `aedt_restart_every` (10) EM points.
   and the lift-off speeds `liftoff_rpm_cold` / `liftoff_rpm_hot` (NaN for the bridgeless rotor,
   whose contact is not linear in speed); the un-suffixed columns then
   hold the case named in `mech_case` (`rated_hot` if requested).
+* **Layered sleeve** (`sleeve_layers`): the sleeve columns above are envelopes over the layers;
+  per layer `sh_sleeve_max_L<i>` and `sleeve_sf_L<i>` (1 = bore), the governing layer
+  `sleeve_sf_layer` and the largest interlaminar r-theta shear `tau_sleeve_interface_max`.
 
 The two figures below are drawn from the sample tables in `examples/data`
 (`python docs/make_figures.py --results`). They are outputs of this toolchain with the
@@ -229,8 +232,12 @@ Details in [docs/methods.md](docs/methods.md); checks and convergence in
   Maxwell outline are kept, so the stress is read at named sections (section 5).
 * **Sleeve**: one cylindrically orthotropic body. By default it has the paper's Table II
   constants; with `sleeve_fibre` set they are derived (Chamis, Halpin-Tsai or rule-of-mixtures
-  micromechanics, balanced +/- winding). The fibre and matrix presets are illustrative class
-  values, not commercial grades. The failure indices are plane-stress ply criteria applied on
+  micromechanics, balanced +/- winding). With `sleeve_layers` it is up to 10 perfectly bonded
+  layers, each with its own winding angle (one fibre, matrix and fibre volume fraction for
+  all). Winding prestress (`sleeve_layer_prestress`) is a hoop eigenstrain applied to all
+  layers at once, not the layer-by-layer build-up of real winding; `sipm winding` converts a
+  winding tension into equivalent values with a closed-form build-up model. The fibre and
+  matrix presets are illustrative class values, not commercial grades. The failure indices are plane-stress ply criteria applied on
   both transverse planes of the ply: no through-thickness interaction, no cure residual stress,
   no end effects, no delamination growth or creep (docs/methods.md section 4).
 * **Electromagnetic model**: 2D transient, one pole with odd periodicity, stranded coils with
@@ -255,22 +262,24 @@ In now:
 * **Load cases as outputs**: standstill, rated speed and overspeed, each cold and hot, reported
   together with the worst case over them and the lift-off speed of the sleeve, validated
   against the closed form and by direct runs at the predicted speed.
+* **Multi-layer sleeves**: hoop and helical layers in one sleeve, each its own material in
+  the stress model and evaluated with its own laminate for failure, with per-layer winding
+  prestress instead of, or together with, the interference; validated against a disc +
+  N-ring closed form, and `sipm winding` for the equivalent prestress of a layer-by-layer
+  winding.
 
 Proposed next:
 
 1. **Sleeve eddy-current loss.** Carbon fibre conducts, far better along the fibre than across
    it. The 2D model only sees axial current, so a hoop-wound sleeve needs a 3D or analytically
    corrected loss model, and an angle-ply sleeve an axial conductivity in Maxwell.
-2. **Multi-layer sleeves.** Hoop and helical layers in one sleeve, with per-layer winding
-   tension as prestress instead of, or together with, the interference, and the matching
-   multi-ring closed form for validation.
-3. **Axial effects.** Generalised plane strain or an axisymmetric r-z model for the axial
+2. **Axial effects.** Generalised plane strain or an axisymmetric r-z model for the axial
    stress, the sleeve end effects and the gaps between magnet segments.
-4. **Temperature in more detail.** Non-uniform temperature, matrix softening towards the glass
+3. **Temperature in more detail.** Non-uniform temperature, matrix softening towards the glass
    transition, and cure residual stress.
-5. **3D failure and long-term behaviour.** 3D failure criteria (Puck, LaRC, 3D Hashin),
+4. **3D failure and long-term behaviour.** 3D failure criteria (Puck, LaRC, 3D Hashin),
    delamination, and creep relaxation of the prestress.
-6. **Calibration.** Fitting the ply data to measurements (ring tests) and propagating the
+5. **Calibration.** Fitting the ply data to measurements (ring tests) and propagating the
    uncertainty in fibre volume fraction.
 
 ## 8. Cite

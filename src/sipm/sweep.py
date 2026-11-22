@@ -42,8 +42,9 @@ def grid(**axes: Iterable) -> list[dict[str, Any]]:
 
 
 # Parameters added after the cache format was fixed (thermal load case, composite sleeve and
-# its strengths, load-case set). Each is left out of the point key while it sits at its default, so a point
-# that does not use the new features hashes exactly as before and caches written by earlier
+# its strengths, load-case set, layered sleeve and winding prestress). Each is left out of the
+# point key while it sits at its default, so a point that does not use the new features hashes
+# exactly as before and caches written by earlier
 # versions stay valid. Such old cached mech points lack the new output columns (sleeve failure
 # indices, sr_sleeve_max, tau_sleeve_max); re-run with a fresh sweep name to get them.
 # A field added in future belongs here too.
@@ -53,6 +54,7 @@ KEY_OMITTED_AT_DEFAULT = (
     "sleeve_fibre", "sleeve_matrix", "sleeve_vf", "sleeve_micromechanics", "sleeve_wind_angle",
     "sleeve_Xt", "sleeve_Xc", "sleeve_Yt", "sleeve_Yc", "sleeve_S",
     "mech_cases", "overspeed_factor", "mech_temperature_cold",
+    "sleeve_layers", "sleeve_layer_prestress",
 )
 _FIELD_DEFAULTS = {f.name: f.default for f in dataclasses.fields(Params)}
 

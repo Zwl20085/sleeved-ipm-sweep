@@ -7,8 +7,10 @@
     sipm params     [--markdown] [--topology T]
     sipm geometry   [--topology T] [--set k=v ...] --out FILE.png
     sipm deck       [--topology T] [--set k=v ...] --out FILE.inp
-    sipm validate   ring|ring-liftoff|liftoff|mesh|open-circuit [...]
-    sipm composite  --fibre F [--matrix M] [--vf V] [--angle DEG] [--model chamis|halpin_tsai|rom] [--toml]
+    sipm validate   ring|ring-liftoff|ring-multilayer|liftoff|mesh|open-circuit [...]
+    sipm composite  --fibre F [--matrix M] [--vf V] [--angle DEG | --layers SPEC] [--model chamis|halpin_tsai|rom]
+                    [--toml]
+    sipm winding    --tension MPa[,MPa...] [--sublayers M] [--topology T] [--set k=v ...]
 
 A sweep configuration (TOML):
 
@@ -87,6 +89,11 @@ def sweep_from_config(cfg: dict, physics: str | None = None):
 
 
 def _parse_sets(items):
+    import dataclasses
+
+    from .params import Params, coerce
+
+    str_fields = {f.name for f in dataclasses.fields(Params) if isinstance(f.default, str)}
     out = {}
     for it in items or []:
         k, v = it.split("=", 1)
@@ -94,7 +101,10 @@ def _parse_sets(items):
             v = json.loads(v)
         except json.JSONDecodeError:
             pass
-        out[k.strip()] = v
+        k = k.strip()
+        if k in str_fields:   # e.g. sleeve_layer_prestress=100 parses as a number: keep it a string
+            v = coerce(k, v)
+        out[k] = v
     return out
 
 
@@ -107,6 +117,8 @@ def _composite(a) -> int:
 
     spec = dict(sleeve_fibre=a.fibre, sleeve_matrix=a.matrix, sleeve_vf=a.vf, sleeve_micromechanics=a.model,
                 sleeve_wind_angle=a.angle)
+    if a.layers:
+        spec["sleeve_layers"] = a.layers
     if a.fibre not in FIBRES:
         raise SystemExit(f"sipm composite: --fibre must be one of {tuple(FIBRES)}, got {a.fibre!r}")
     try:
@@ -114,6 +126,8 @@ def _composite(a) -> int:
     except ValueError as e:
         raise SystemExit(f"sipm composite: {e}") from None
     units = {f.name: f.metadata.get("unit", "") for f in dataclasses.fields(Params)}
+    if a.layers:
+        return _composite_layers(a, p, spec, units)
     print(f"{a.fibre} / {a.matrix}, vf = {a.vf:g}, +/-{a.angle:g} deg from hoop, {a.model} micromechanics")
     for k in SLEEVE_KEYS:
         print(f"  {k:<24s} = {getattr(p, k):.6g} {units[k]}")
@@ -126,6 +140,62 @@ def _composite(a) -> int:
         print("# then treat the sleeve as one hoop-wound ply, which is right only for a 0 deg winding")
         for k in SLEEVE_KEYS:
             print(f"# {k} = {getattr(p, k)!r}")
+    return 0
+
+
+def _composite_layers(a, p, spec: dict, units: dict) -> int:
+    """`sipm composite --layers`: constants of every layer and of the stack (membrane homogenisation)."""
+    from .composite import SLEEVE_KEYS, sleeve_params
+
+    angles, fracs = p.sleeve_layer_angles(), p.sleeve_layer_fractions()
+    consts = p.sleeve_layer_constants()
+    stack = sleeve_params(p.sleeve_laminate())
+    print(f"{a.fibre} / {a.matrix}, vf = {a.vf:g}, {a.model} micromechanics, {len(angles)} layers from the bore: "
+          f"{a.layers}")
+    head = "".join(f"{f'layer {i + 1}':>14s}" for i in range(len(angles))) + f"{'stack':>14s}"
+    print(f"  {'':<24s} {'':<6s}{head}")
+    print(f"  {'winding angle':<24s} {'deg':<6s}" + "".join(f"{f'+/-{x:g}':>14s}" for x in angles) + f"{'':>14s}")
+    print(f"  {'thickness fraction':<24s} {'-':<6s}" + "".join(f"{x:14.4g}" for x in fracs) + f"{1.0:14.4g}")
+    for k in SLEEVE_KEYS:
+        print(f"  {k:<24s} {units[k]:<6s}" + "".join(f"{c[k]:14.6g}" for c in consts) + f"{stack[k]:14.6g}")
+    print("  (stack = membrane homogenisation of the layers: the values the thirteen sleeve parameters take;")
+    print("   the deck and the failure evaluation use each layer's own constants)")
+    if a.toml:
+        print()
+        print("# [base] lines: layered composite spec (sipm derives every layer's constants at run time)")
+        for k, v in spec.items():
+            print(f'{k} = "{v}"' if isinstance(v, str) else f"{k} = {v!r}")
+    return 0
+
+
+def _winding(a) -> int:
+    """`sipm winding`: equivalent sleeve_layer_prestress of a layer-by-layer winding (closed form)."""
+    from .params import default_params
+    from .validation import winding_prestress
+
+    try:
+        p = default_params(a.topology, **_parse_sets(a.set))
+        tension = [float(x) for x in a.tension.split(",")]
+        r = winding_prestress(p, tension[0] if len(tension) == 1 else tension, a.sublayers)
+    except ValueError as e:
+        raise SystemExit(f"sipm winding: {e}") from None
+    radii, seq = r["radii"], r["sequential"]
+    angles, consts = p.sleeve_layer_angles(), p.sleeve_layer_constants()
+    print(f"{a.topology}: lamination as a solid disc of radius {radii[0]:g} mm, {len(angles)} sleeve layer(s) to "
+          f"{radii[-1]:g} mm, wound one after the other"
+          + (f" ({a.sublayers} sub-rings per layer)" if a.sublayers > 1 else ""))
+    print(f"  {'layer':<6s}{'angle':>8s}{'r bore':>9s}{'r OD':>9s}{'E_hoop':>9s}{'winding':>10s}{'built-up':>10s}"
+          f"{'equivalent':>12s}")
+    print(f"  {'':<6s}{'deg':>8s}{'mm':>9s}{'mm':>9s}{'GPa':>9s}{'MPa':>10s}{'mean MPa':>10s}{'prestress':>12s}")
+    tw = tension * len(angles) if len(tension) == 1 else tension
+    for i, ang in enumerate(angles):
+        print(f"  {i + 1:<6d}{ang:8g}{radii[i]:9.4f}{radii[i + 1]:9.4f}{consts[i]['sleeve_E_hoop']:9.4g}"
+              f"{tw[i]:10.4g}{seq['layers'][i]['sh_mean']:10.4g}{r['prestress'][i]:12.5g}")
+    print(f"  contact pressure on the lamination from the winding alone: {-seq['sr'][0]:.4g} MPa")
+    print(f"  the equivalent prestresses reproduce every layer's hoop force and the interface pressures of the "
+          f"build-up; hoop stresses within a layer differ by up to {r['max_hoop_dev']:.3g} MPa")
+    print()
+    print(f'sleeve_layer_prestress = "{r["spec"]}"')
     return 0
 
 
@@ -221,9 +291,17 @@ def main(argv=None) -> int:
     s.add_argument("--vf", type=float, default=0.55, help="fibre volume fraction")
     s.add_argument("--angle", type=float, default=0.0, help="winding angle from hoop (deg), balanced +/-")
     s.add_argument("--model", default="chamis", help="micromechanics: chamis, halpin_tsai or rom")
+    s.add_argument("--layers", default="",
+                   help="layered sleeve, 'angle:weight' items from the bore, e.g. '0:2,20:1,0:1' (--angle must be 0)")
     s.add_argument("--toml", action="store_true", help="also print the lines for a sweep's [base] table")
+    s = sub.add_parser("winding", help="equivalent sleeve_layer_prestress of a layer-by-layer winding (no Ansys)")
+    s.add_argument("--tension", required=True,
+                   help="winding stress in MPa, one value or one per layer (mean hoop stress of a layer as it is laid)")
+    s.add_argument("--sublayers", type=int, default=1, help="lay every layer as this many sub-rings in turn")
+    s.add_argument("--topology", default="sleeved_bridged")
+    s.add_argument("--set", nargs="*", default=[])
     s = sub.add_parser("validate")
-    s.add_argument("what", choices=["ring", "ring-liftoff", "liftoff", "mesh", "open-circuit"])
+    s.add_argument("what", choices=["ring", "ring-liftoff", "ring-multilayer", "liftoff", "mesh", "open-circuit"])
     s.add_argument("--case", default="orthotropic",
                    help="ring: isotropic|orthotropic|thermal; liftoff: cold|hot (default cold)")
     s.add_argument("--topology", default="sleeved_bridged")
@@ -282,6 +360,8 @@ def main(argv=None) -> int:
         return 0
     if a.cmd == "composite":
         return _composite(a)
+    if a.cmd == "winding":
+        return _winding(a)
     if a.cmd in ("geometry", "deck"):
         from .params import default_params
 
@@ -314,6 +394,16 @@ def main(argv=None) -> int:
                 print(f"lift-off {row['label']:<4s} ({row['temperature']:g} degC)  FE {row['fe']:10.1f} rpm  "
                       f"closed form {row['closed_form']:10.1f} rpm  error {100 * row['rel_error']:+.4f} %  "
                       f"[{row['basis']}]")
+        elif a.what == "ring-multilayer":
+            from .validation import multilayer_ring_check
+
+            r = multilayer_ring_check(cfg=c)
+            for row in r["rows"]:
+                print(f"{row['quantity']:<42s} FE {row['fe']:12.5f}  closed form {row['closed_form']:12.5f}  "
+                      f"error {100 * row['rel_error']:+.3f} %")
+            for row in r["liftoff"]:
+                print(f"lift-off {row['label']:<4s} ({row['temperature']:g} degC)  FE {row['fe']:10.1f} rpm  "
+                      f"closed form {row['closed_form']:10.1f} rpm  error {100 * row['rel_error']:+.4f} %")
         elif a.what == "liftoff":
             from .params import default_params
             from .validation import liftoff_check

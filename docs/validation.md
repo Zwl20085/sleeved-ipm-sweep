@@ -501,3 +501,119 @@ the middle ones are compared with the two-point lines element by element and the
 flagged above 1 % of the element's standstill pressure. In the six-case point above
 (standstill, rated and overspeed all closed) the rated case deviates by at most 2.8e-5 (cold),
 so no flag is set; the bridgeless rotor's 8.7 % would be flagged.
+
+## 12. Layered sleeve and winding prestress
+
+**Closed form** (`sipm.analytic.disc_rings`, methods.md section 4.6), checked offline in
+`tests/test_multilayer_sleeve.py`: for N = 1 the coefficients, the pressure and the fields equal
+those of `disc_ring` bit for bit (four load sets, one of them separated); three bonded rings
+of one material reproduce one ring to 1e-9; in a 3-layer stack (the case below) the
+equilibrium equation and the constitutive law with thermal and eigenstrain hold by finite
+differences to 1e-6 of the stress scale, u and sigma_r are continuous at both interfaces
+(1e-10), the interference condition and the traction-free OD hold, the pressure is the sum of
+its interference, thermal, prestress and centrifugal parts (1e-10), and a free ring with a hoop
+eigenstrain agrees with a numerical boundary-value solution (1e-9 mm, 1e-6 MPa) with zero net
+hoop force.
+
+**Which MAPDL mechanism for the prestress.** On the disc + 1.5 mm Table II ring (no
+interference, standstill, hoop eigenstrain eps0 = 100 MPa / 125 GPa) both `INISTATE` forms were
+run: an initial elastic hoop strain (`DTYP,EPEL`, eps0) and an initial stress (`DTYP,STRE`,
+the plane-stress stiffness times eps0, computed in Python), both in the element axes
+(`CSYS,-2`). The two runs gave identical results to every printed digit: contact pressure
+2.0720 MPa against 2.0743 MPa closed form (-0.11 %), hoop stress 98.39 / 98.13 MPa at bore / OD
+against 98.51 / 98.24 MPa (-0.12 %). The strain form is used (methods.md section 4.6).
+
+**Averaging across the layer interface.** On the 3-layer ring below, a post-only run on the
+results file read the hoop stress of the interface node at r = 71.85 mm, theta = 0 with
+different element selections: both layers selected 311.28 MPa (also with everything selected),
+layer 1 only 445.34 MPa, layer 2 only 177.22 MPa. MAPDL averages nodal results across the
+material boundary, which is why the deck post-processes layer by layer.
+
+**3-layer ring against the closed form.** `multilayer_ring_check` (`sipm validate
+ring-multilayer`, `test_ring_multilayer_against_closed_form`): solid steel disc 71.1 mm with a
+1.5 mm carbon_sm/epoxy sleeve (vf 0.55, Chamis), layers hoop / +/-30 deg / hoop with
+thicknesses 0.75 / 0.375 / 0.375 mm, winding prestress 100 / 40 / 100 MPa, 0.1 mm interference,
+20000 rpm, rotor 120 degC against a fitting temperature of 20 degC, element size 0.5 mm, 22 163
+nodes, 12 s. FE layer values from that layer's node export (mean over the nodes at the radius):
+
+| quantity | FE | closed form | error |
+|---|---|---|---|
+| disc max von Mises (MPa) | 64.5480 | 64.5390 | +0.014 % |
+| interface pressure, max / min over contact (MPa) | 7.2572 / 7.2571 | 7.2653 | -0.110 % / -0.112 % |
+| layer 1 (hoop): max hoop, at its bore, at its OD (MPa) | 445.352 / 444.512 / 445.345 | 445.812 / 445.006 / 445.812 | -0.103 / -0.111 / -0.105 % |
+| layer 2 (+/-30 deg): max hoop, at its bore, at its OD (MPa) | 177.599 / 177.218 / 177.599 | 177.750 / 177.370 / 177.750 | -0.085 / -0.086 / -0.085 % |
+| layer 3 (hoop): max hoop, at its bore, at its OD (MPa) | 447.735 / 447.019 / 447.733 | 448.194 / 447.483 / 448.194 | -0.103 / -0.104 / -0.103 % |
+| radial stress at interface 1/2, 2/3 (MPa) | -2.8948 / -2.1397 | -2.8986 / -2.1424 | -0.131 / -0.128 % |
+
+Lift-off speed from the cases standstill and 20000 rpm at 20 degC and at 120 degC, element by
+element (methods.md section 3.1), against `rings_liftoff_speed`:
+
+| temperature | FE (rpm) | closed form (rpm) | error |
+|---|---|---|---|
+| 20 degC (= fitting) | 70 739.0 | 70 739.1 | -2.5e-6 |
+| 120 degC | 88 797.7 | 88 798.0 | -2.3e-6 |
+
+The layered path agrees with the closed form as closely as the single ring does (section 1):
+the hoop stress jumps from 445 to 177 MPa at the first interface and back to 447 MPa at the
+second, and each layer's own values are reproduced. The radial stresses of the two sides of an
+interface agree within 0.05 % and the interlaminar r-theta shear is 0.20 MPa (0.05 % of the hoop
+stress), the discretisation noise of an axisymmetric problem. The helical layer governs the
+Tsai-Wu safety factor (2.68, against 4.44 and 4.47 in the hoop layers), although it carries the
+lowest hoop stress. Before the bore arc of the first layer was sized like the lamination OD
+(methods.md section 4.6), the finer target mesh made the contact pressure ripple between 7.085
+and 7.444 MPa around the right mean; matched, it is uniform to 2e-5.
+
+**Single-layer prestress** (`test_ring_prestress_single_layer`): the orthotropic Table II
+ring of section 1 with no interference, a 150 MPa winding prestress, 20000 rpm and 100 K hot,
+against the N = 1 closed form: sleeve hoop 317.81 / 318.12 MPa (-0.098 %), contact pressure
+5.8078 / 5.8144 MPa (-0.114 %), disc 65.997 / 65.990 MPa (+0.011 %).
+
+**Rotor study** (`examples/configs/mech_multilayer_sleeve.toml`): default bridge-retained
+rotor, 1.5 mm sleeve, frictionless sleeve contact, bonded magnets, cases standstill, 20000 rpm
+and 24000 rpm at 20 degC (the fitting temperature), lift-off from them. Points: (a) today's
+sleeve, one hoop layer with the Table II constants, 0.1 mm interference; (a2) one hoop layer of
+carbon_sm/epoxy (vf 0.55, Chamis), the material of (b) and (c), 0.1 mm interference; (b) hoop /
++/-20 deg / hoop layers of 0.75 / 0.375 / 0.375 mm, same material and interference; (c) three
+0.5 mm hoop layers, no interference, a uniform winding prestress of 169.7 MPa. The prestress of
+(c) was set from one trial run at 100 MPa (standstill minimum contact pressure 1.5440 MPa),
+scaled linearly to (a)'s 2.6196 MPa; the run at 169.7 MPa gave 2.6200 MPa, so the response is
+linear in the prestress to 1e-4. All runs converged with every contact element closed; 25 160
+(single layer), 27 719 (b) and 27 147 (c) nodes, 34-44 s per point for the three cases.
+Stresses in MPa, at 20000 rpm unless stated:
+
+| point | `svm_lam_max` (`qhole`), 20000 / 24000 rpm | sleeve hoop max per layer, bore to OD | contact p min, standstill / 20000 / 24000 rpm | Tsai-Wu safety factor (governing layer), 20000 / 24000 rpm | interlaminar shear | lift-off (rpm) |
+|---|---|---|---|---|---|---|
+| (a) Table II hoop, 0.1 mm | 253.3 / 374.4 | 223.9 | 2.620 / 2.576 / 2.234 | 8.92 / 8.08 | | 39 357 |
+| (a2) carbon_sm hoop, 0.1 mm | 251.8 / 372.5 | 228.5 | 2.745 / 2.812 / 2.636 | 8.72 / 7.92 | | 45 711 |
+| (b) hoop / +/-20 / hoop, 0.1 mm | 254.2 / 375.2 | 229.0 / 141.5 / 221.8 | 2.521 / 2.529 / 2.223 | 6.48 (2) / 5.93 (2) | 1.37 | 41 589 |
+| (c) 3 x hoop, 169.7 MPa prestress, no interference | 252.9 / 373.6 | 218.4 / 209.8 / 214.4 | 2.620 / 2.685 / 2.463 | 9.13 (1) / 8.28 (1) | 1.42 | 44 629 |
+
+* **Lamination.** The headline stress hardly depends on how the sleeve is made: 251.8 to
+  254.2 MPa at 20000 rpm, 372.5 to 375.2 MPa at overspeed, always at the lightening-hole
+  fillet. What retains the rotor is the sleeve's radial pressure, and all four sleeves give
+  2.2 to 2.8 MPa.
+* **Helical layer (b against a2, same material).** Replacing a quarter of the hoop thickness by
+  a +/-20 deg layer (E_hoop 83 against 128 GPa) lowers the minimum contact pressure by 8-16 %
+  and the lift-off speed by 9 % (45 711 to 41 589 rpm). The helical layer carries 141.5 MPa
+  against 229 / 222 MPa in the hoop layers beside it, but it governs the safety factor
+  (6.48 against 8.73 and 9.02 in the hoop layers), because its fibres are not aligned with the
+  load; the sleeve's safety factor falls from 8.72 to 6.48.
+* **Winding prestress instead of interference (c).** At the same standstill pressure as (a),
+  the prestressed sleeve keeps more pressure at speed (2.685 against 2.576 MPa at 20000 rpm)
+  and lifts off later (44 629 against 39 357 rpm). Part of that is the material (compare a2,
+  45 711 rpm with 2.745 MPa at standstill); against a2 the prestressed sleeve is close to the
+  interference-fitted one, with lower hoop stress (218.4 against 228.5 MPa) and a higher safety
+  factor (9.13 against 8.72). A winding prestress sigma0 acts like an interference of about
+  sigma0 r / E_hoop: 169.7 MPa x 71.1 mm / 128 GPa = 0.094 mm, against the 0.1 mm of a2.
+  The three layers relax only a little (hoop maxima 170.3 / 164.6 / 168.5 MPa at standstill,
+  from 169.7 MPa), because the rotor beneath is stiff.
+* **Interlaminar shear.** 1.4 MPa in both layered sleeves at 20000 rpm (1.7-1.8 MPa at
+  overspeed), from the non-uniform support of the lamination; compare the 70 MPa in-plane shear
+  strength of the ply. The radial stress stays compressive in all sleeves except for traces
+  (at most 0.03 MPa).
+* The simultaneous prestress of (c) is not the build-up of real winding (methods.md section
+  4.6): wound layer by layer onto this rotor, the inner layers would be relaxed by the outer
+  ones. For a winding stress of 100 MPa on the closed-form model of this rotor
+  (`sipm winding --tension 100 --set sleeve_fibre=carbon_sm sleeve_layers=0:1,0:1,0:1`) the
+  equivalent prestresses are within 2 % of the winding stress, because the solid disc beneath
+  is stiff; the slotted rotor gives way more, so the real relaxation is larger.

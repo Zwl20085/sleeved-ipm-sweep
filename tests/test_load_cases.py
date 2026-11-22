@@ -217,7 +217,13 @@ def test_envelope_worst_and_governing_case():
     assert env["sleeve_fi_hashin_matrix__worst_case"] == "standstill_cold"
     # all equal -> the first case in canonical order governs
     assert env["sleeve_open_fraction__worst"] == 0.0 and env["sleeve_open_fraction__worst_case"] == "standstill_cold"
-    assert set(env) == {f"{n}__worst{s}" for n, _ in lc.ENVELOPE for s in ("", "_case")}
+    # every output of a single-layer point; the interlaminar shear exists only for a layered sleeve
+    # (tests/test_multilayer_sleeve.py) and is left out like any missing output
+    assert set(env) == {f"{n}__worst{s}" for n, _ in lc.ENVELOPE for s in ("", "_case")
+                        if n != "tau_sleeve_interface_max"}
+    layered = lc.envelope({c: _fake(i, tau_sleeve_interface_max=0.1 * (3 - i)) for i, c in enumerate(MECH_CASES)})
+    assert layered["tau_sleeve_interface_max__worst"] == pytest.approx(0.3)
+    assert layered["tau_sleeve_interface_max__worst_case"] == "standstill_cold"
 
 
 def test_envelope_ties_nan_and_missing():
