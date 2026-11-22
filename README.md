@@ -151,6 +151,13 @@ failed. AEDT is restarted every `aedt_restart_every` (10) EM points.
 * **EM**: `torque_avg`, `torque_max`, `torque_min` [N m] over 60 electrical degrees at
   `gamma` (current advance angle from the +d axis, 90 deg = pure q-axis current) and
   `current_rms`; `torque_ripple` = (max - min) / average; the waveform is in the cache.
+* **Sleeve eddy loss** (EM runs with a conducting sleeve, `sleeve_sigma_fibre` /
+  `sleeve_sigma_transverse` > 0): `sleeve_loss_w` [W], the 2D axial-current loss of the sleeve
+  for the whole machine and stack length, averaged over the last 60-degree loss period;
+  `sleeve_loss_frac` (over shaft power), `sleeve_loss_rel_change` (convergence of the average),
+  `sleeve_sigma_axial` (the axial conductivity the model uses), `sleeve_skin_depth_mm`,
+  `sleeve_skin_ratio`, `sleeve_mesh_mm`, `sleeve_steps_per_slot`. What this loss leaves out:
+  section 6.
 * **Stress** [MPa]: `svm_rotor_max` = `svm_lam_max` is the headline lamination stress: the peak
   von Mises stress over **named load-carrying sections**, each also reported as
   `svm_<section>`:
@@ -242,7 +249,15 @@ Details in [docs/methods.md](docs/methods.md); checks and convergence in
   no end effects, no delamination growth or creep (docs/methods.md section 4).
 * **Electromagnetic model**: 2D transient, one pole with odd periodicity, stranded coils with
   7 turns per slot and 2 parallel paths, generic BH curve, linear magnets; no end effects, skew,
-  iron loss, eddy currents, temperature or demagnetisation check.
+  iron loss, magnet or copper eddy currents, temperature or demagnetisation check.
+* **Sleeve eddy loss is 2D, axial current only.** The sleeve enters with its axial conductivity
+  (sigma_L sin^2 t + sigma_T cos^2 t per layer, t = winding angle from hoop) and ideal end
+  return. For a **hoop-wound** sleeve the easy, along-fibre path is circumferential and is not in
+  the model: the result is the axial, across-fibre part of the loss, not the total. For
+  **helical** layers the end-return resistance is left out, so the loss is over-counted. No 3D
+  or end correction is applied; sinusoidal currents only (no PWM ripple); the loss is not fed
+  into the stress model's temperature. The conductivities are inputs: none is shipped as
+  material data (docs/methods.md section 2.1).
 * **AC copper loss runs are disabled** until the strand geometry of the stator is defined.
 * Tested on Windows with Ansys 2024 R1. The MAPDL driver should also work on Linux; the
   Maxwell driver needs a platform supported by PyAEDT.
@@ -267,12 +282,16 @@ In now:
   prestress instead of, or together with, the interference; validated against a disc +
   N-ring closed form, and `sipm winding` for the equivalent prestress of a layer-by-layer
   winding.
+* **Sleeve eddy-current loss, 2D axial-current part**: ply conductivities along and across the
+  fibre give the sleeve's axial conductivity, and EM runs with a conducting sleeve report the
+  time-averaged 2D axial-current loss with ideal end return, checked against a thin-shell
+  estimate from the non-conducting field and for its scaling with conductivity and speed.
 
 Proposed next:
 
-1. **Sleeve eddy-current loss.** Carbon fibre conducts, far better along the fibre than across
-   it. The 2D model only sees axial current, so a hoop-wound sleeve needs a 3D or analytically
-   corrected loss model, and an angle-ply sleeve an axial conductivity in Maxwell.
+1. **Sleeve eddy-current loss in 3D, with the end return.** The circumferential, along-fibre
+   currents of a hoop-wound sleeve and the end-return resistance of helical layers need a 3D
+   or analytically corrected model; the 2D axial-current part above is the starting point.
 2. **Axial effects.** Generalised plane strain or an axisymmetric r-z model for the axial
    stress, the sleeve end effects and the gaps between magnet segments.
 3. **Temperature in more detail.** Non-uniform temperature, matrix softening towards the glass

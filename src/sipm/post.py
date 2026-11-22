@@ -102,6 +102,14 @@ LABELS = {
     "sleeve_sf_layer": "Governing sleeve layer, Tsai-Wu, 1 = bore (-)",
     **{f"sh_sleeve_max_L{k}": f"Max hoop stress, sleeve layer {k} (MPa)" for k in range(1, MAX_SLEEVE_LAYERS + 1)},
     **{f"sleeve_sf_L{k}": f"Tsai-Wu strength ratio, sleeve layer {k} (-)" for k in range(1, MAX_SLEEVE_LAYERS + 1)},
+    # conducting sleeve (2D axial-current eddy loss, docs/methods.md 2.1)
+    "sleeve_sigma_fibre": "Sleeve ply conductivity along fibre (S/m)",
+    "sleeve_sigma_transverse": "Sleeve ply conductivity across fibre (S/m)",
+    "sleeve_sigma_axial": "Sleeve axial conductivity (S/m)",
+    "sleeve_loss_w": "Sleeve eddy loss, 2D axial current (W)",
+    "sleeve_loss_frac": "Sleeve eddy loss / shaft power (-)",
+    "sleeve_loss_rel_change": "Sleeve loss, change over last period (-)",
+    "sleeve_skin_depth_mm": "Skin depth at slot-passing frequency (mm)",
 }
 
 

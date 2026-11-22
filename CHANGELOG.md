@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Sleeve eddy-current loss (2D, axial current)
+
+* **Sleeve conductivity.** New parameters `sleeve_sigma_fibre` and `sleeve_sigma_transverse`
+  (S/m, ply values along and across the fibre; default 0 and 0 = non-conducting sleeve, model,
+  cache keys and results unchanged). Derived `Params.sleeve_conductivity_axial`: per layer
+  sigma_L sin^2 t + sigma_T cos^2 t (t = winding angle from hoop; a hoop winding gives the
+  across-fibre value), layers thickness-weighted (in parallel); helpers
+  `sipm.composite.ply_axial_conductivity` and `axial_conductivity`. No conductivity is shipped
+  as a material property.
+* **Cache keys.** The two fields are left out of the point key at their default
+  (`KEY_OMITTED_AT_DEFAULT`) and always out of `em_model_key`, which adds the derived axial
+  conductivity when it is > 0: every non-conducting sleeve keeps its key (pinned against the
+  previous code), winding angle and layers reach the EM key only through the axial conductivity.
+* **EM runs with a conducting sleeve** (`physics = "em"`, axial conductivity > 0): sleeve
+  conductivity and eddy effects on (set directly: PyAEDT's `eddy_effects_on` skips materials
+  below 1e5 S/m), no net-current constraint (the odd-periodic one-pole model makes the ring total
+  zero; Maxwell leaves a passive solid's net current free), same mesh as before; the run covers
+  a lead-in plus two 60-degree loss periods (180 electrical degrees by default). New columns
+  `sleeve_loss_w` (time average of `SolidLoss` over the last loss period, whole machine, stack
+  length), `sleeve_loss_rel_change` (change from the period before), `sleeve_loss_frac` (over
+  shaft power), `sleeve_sigma_axial`, `sleeve_skin_depth_mm` and `sleeve_skin_ratio` (at the
+  slot-passing frequency), `sleeve_mesh_mm`, `sleeve_steps_per_slot`; torque is averaged over the
+  last `em_span` degrees. A run with too few time steps per slot period or a mesh coarser than
+  half the skin depth is refused. Non-conducting runs and their columns are unchanged.
+* **`sipm.eddy`**: loss period, skin depth, `period_average`, and the thin-shell estimate of the
+  resistance-limited loss from the non-conducting field (`shell_loss_from_potential`, harmonic
+  form `shell_loss_from_br`, with the sleeve's J x B torque, `rotor_frame`).
+  `MaxwellSession.sleeve_lines` exports field quantities on arcs through the sleeve over a run,
+  `parse_line_report_csv` reads them and `sipm.validation.sleeve_shell_estimate` turns a
+  non-conducting export into the estimate.
+* **CLI / config**: `sipm composite --sigma-fibre S --sigma-transverse S` prints the axial
+  conductivity (per layer with `--layers`); `examples/configs/em_sleeve_loss.toml`; plot labels.
+* **Validation** (docs/validation.md section 13) and the limits of a 2D axial-current loss
+  (docs/methods.md 2.1): for hoop windings it is the across-fibre, axial-current part of the
+  loss only; for helical layers it over-counts by leaving out the end-return resistance.
+
 ### Layered sleeve, winding prestress, disc + N rings closed form
 
 * **Layered sleeve.** New parameter `sleeve_layers` (default '' = the single-layer sleeve, deck

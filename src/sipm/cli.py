@@ -119,6 +119,9 @@ def _composite(a) -> int:
                 sleeve_wind_angle=a.angle)
     if a.layers:
         spec["sleeve_layers"] = a.layers
+    if a.sigma_fibre is not None or a.sigma_transverse is not None:
+        spec["sleeve_sigma_fibre"] = float(a.sigma_fibre or 0.0)
+        spec["sleeve_sigma_transverse"] = float(a.sigma_transverse or 0.0)
     if a.fibre not in FIBRES:
         raise SystemExit(f"sipm composite: --fibre must be one of {tuple(FIBRES)}, got {a.fibre!r}")
     try:
@@ -131,6 +134,7 @@ def _composite(a) -> int:
     print(f"{a.fibre} / {a.matrix}, vf = {a.vf:g}, +/-{a.angle:g} deg from hoop, {a.model} micromechanics")
     for k in SLEEVE_KEYS:
         print(f"  {k:<24s} = {getattr(p, k):.6g} {units[k]}")
+    _print_conductivity(p, spec)
     if a.toml:
         print()
         print("# [base] lines: composite spec (sipm derives the sleeve constants from it at run time)")
@@ -141,6 +145,23 @@ def _composite(a) -> int:
         for k in SLEEVE_KEYS:
             print(f"# {k} = {getattr(p, k)!r}")
     return 0
+
+
+def _print_conductivity(p, spec: dict) -> None:
+    """Axial conductivity of the sleeve when ply conductivities were given (`sipm composite`)."""
+    if "sleeve_sigma_fibre" not in spec:
+        return
+    from .composite import ply_axial_conductivity
+
+    sl, st = p.sleeve_sigma_fibre, p.sleeve_sigma_transverse
+    print(f"  electrical conductivity: ply {sl:.6g} S/m along the fibre, {st:.6g} S/m across it")
+    if p.is_layered:
+        per = ", ".join(f"{ply_axial_conductivity(sl, st, ang):.6g}" for ang in p.sleeve_layer_angles())
+        print(f"    axial conductivity of each layer (S/m): {per}")
+    print(f"  {'sleeve_conductivity_axial':<24s} = {p.sleeve_conductivity_axial:.6g} S/m  (sigma_L sin^2 t + "
+          "sigma_T cos^2 t, layers thickness-weighted)")
+    print("    the only conductivity the 2D EM model uses (axial current); for a hoop winding it is the")
+    print("    across-fibre value and the circumferential (along-fibre) path is not modelled (docs/methods.md, 2.1)")
 
 
 def _composite_layers(a, p, spec: dict, units: dict) -> int:
@@ -160,6 +181,7 @@ def _composite_layers(a, p, spec: dict, units: dict) -> int:
         print(f"  {k:<24s} {units[k]:<6s}" + "".join(f"{c[k]:14.6g}" for c in consts) + f"{stack[k]:14.6g}")
     print("  (stack = membrane homogenisation of the layers: the values the thirteen sleeve parameters take;")
     print("   the deck and the failure evaluation use each layer's own constants)")
+    _print_conductivity(p, spec)
     if a.toml:
         print()
         print("# [base] lines: layered composite spec (sipm derives every layer's constants at run time)")
@@ -293,6 +315,10 @@ def main(argv=None) -> int:
     s.add_argument("--model", default="chamis", help="micromechanics: chamis, halpin_tsai or rom")
     s.add_argument("--layers", default="",
                    help="layered sleeve, 'angle:weight' items from the bore, e.g. '0:2,20:1,0:1' (--angle must be 0)")
+    s.add_argument("--sigma-fibre", type=float, default=None,
+                   help="ply electrical conductivity along the fibre (S/m): prints the sleeve's axial conductivity")
+    s.add_argument("--sigma-transverse", type=float, default=None,
+                   help="ply electrical conductivity across the fibre (S/m)")
     s.add_argument("--toml", action="store_true", help="also print the lines for a sweep's [base] table")
     s = sub.add_parser("winding", help="equivalent sleeve_layer_prestress of a layer-by-layer winding (no Ansys)")
     s.add_argument("--tension", required=True,

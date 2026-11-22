@@ -284,6 +284,52 @@ def open_circuit_check(data: dict, p: Params) -> dict:
     return out
 
 
+def sleeve_shell_estimate(lines: dict, p: Params, sigma: float | None = None) -> dict:
+    """Thin-shell estimate of the 2D sleeve loss from a NON-conducting run's vector potential on arcs
+    through the sleeve (:meth:`sipm.maxwell.MaxwellSession.sleeve_lines`; docs/validation.md, 13).
+
+    ``lines``: ``t`` (s, uniform), ``phi`` (rad, 0 .. 360/poles deg, both ends), ``radii`` (m) and
+    ``Flux_Lines`` (n_r, n_t, n_phi), A_z in Wb/m in the stationary frame. The pole is extended to the
+    full ring by the odd periodicity, resampled into the rotor frame (rotation at em_rpm in +theta) and
+    the last loss period (60 electrical degrees) evaluated with :func:`sipm.eddy.shell_loss_from_potential`
+    (backward differences as the solver's time stepping; net current 'ring', 'none' and 'sector' =
+    zero per pole) and with central differences, and with :func:`sipm.eddy.shell_loss_from_br`
+    (harmonic form from B_r at the middle radius). ``sigma`` defaults to the axial conductivity of
+    ``p`` (which must then be > 0). Returns the losses (W), the harmonic form's sleeve torque (N m),
+    its largest contributions and the odd-periodicity seam mismatch of the export."""
+    from . import eddy
+
+    sigma = p.sleeve_conductivity_axial if sigma is None else sigma
+    if not sigma > 0:
+        raise ValueError("sleeve_shell_estimate needs sigma > 0")
+    t, phi, radii, a = (np.asarray(lines[k], dtype=float) for k in ("t", "phi", "radii", "Flux_Lines"))
+    fe = p.em_rpm * p.pole_pairs / 60.0
+    dt = t[1] - t[0]
+    m = int(round(eddy.loss_period_deg(p.slots, p.poles) / 360.0 / fe / dt))
+    if len(t) < m + 1:
+        raise ValueError("sleeve_shell_estimate: the record is shorter than one loss period")
+    seam = float(np.max(np.abs(a[:, :, -1] + a[:, :, 0])) / np.max(np.abs(a)))
+    ring = np.concatenate([a[:, :, :-1] * (-1) ** k for k in range(p.poles)], axis=2)
+    th = np.arange(ring.shape[2]) * 2 * math.pi / ring.shape[2]
+    om = 2 * math.pi * p.em_rpm / 60.0
+    win = slice(len(t) - m - 1, len(t))
+    tw = t[win]
+    ar = np.array([eddy.rotor_frame(th, tw, ring[i, win], om, th) for i in range(len(radii))])
+    L = p.stack_length * 1e-3
+    out = dict(seam_mismatch=seam, sigma=sigma)
+    for nc in ("ring", "none", "sector"):
+        out[f"loss_{nc}"] = eddy.shell_loss_from_potential(tw, th, ar, sigma, radii, L, net_current=nc,
+                                                           sectors=p.poles)["loss"]
+    out["loss_central"] = eddy.shell_loss_from_potential(tw, th, ar, sigma, radii, L, method="central")["loss"]
+    k = len(radii) // 2
+    n = np.fft.fftfreq(ar.shape[2], d=1.0 / ar.shape[2])
+    br = np.real(np.fft.ifft(1j * n * np.fft.fft(ar[k, 1:], axis=1), axis=1)) / radii[k]
+    h = eddy.shell_loss_from_br(tw[1:], th, br, sigma, radii[0], radii[-1], L)
+    out.update(loss_harmonic=h["loss"], torque_harmonic=h["torque"], spectrum=h["spectrum"],
+               br_max=float(np.max(np.abs(br))))
+    return out
+
+
 def mesh_study(p: Params, sizes=((0.8, 0.3), (0.5, 0.15), (0.3, 0.08), (0.2, 0.04)), cfg: Config | None = None,
                workdir: str | Path | None = None) -> list[dict]:
     """Solve one design with successively finer meshes; returns one row per mesh."""

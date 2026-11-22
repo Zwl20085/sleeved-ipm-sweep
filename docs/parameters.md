@@ -78,6 +78,8 @@ measure what similar names measured before the rebase:
 | `pm_br` | 1.4 | T | illustrative |  | PM remanence (linear magnet). Paper: G52UH, 'higher than 1.40 T' |
 | `pm_mur` | 1.05 | - | illustrative |  | PM recoil permeability |
 | `cu_conductivity` | 58000000.0 | S/m | illustrative |  | Copper conductivity (AC-loss runs) |
+| `sleeve_sigma_fibre` | 0.0 | S/m | illustrative |  | Sleeve ply electrical conductivity ALONG the fibre (sigma_L). With sleeve_sigma_transverse it gives the axial conductivity of the sleeve (sleeve_conductivity_axial = sigma_L sin^2 t + sigma_T cos^2 t per layer at winding angle t from hoop, layers thickness-weighted), the only one a 2D model with axial current uses. 0 and 0 (default) = non-conducting sleeve, model and results unchanged; > 0 axial conductivity adds the 2D sleeve eddy-current loss to EM runs (docs/methods.md, 2.1). Illustrative class statement only, not a material property: carbon/epoxy is often quoted at 1e3-1e5 S/m along the fibre and orders of magnitude lower across it; measure your laminate |
+| `sleeve_sigma_transverse` | 0.0 | S/m | illustrative |  | Sleeve ply electrical conductivity ACROSS the fibre (sigma_T), set by fibre-to-fibre contacts through the matrix; for a hoop-wound sleeve (winding angle 0) it is the axial conductivity. Illustrative class statement only: typically several orders of magnitude below sigma_L and strongly process-dependent; measure your laminate |
 | `current_rms` | 420.0 | A | paper |  | Phase current (rms); paper's full-load value |
 | `gamma` | 130.0 | deg(e) | illustrative |  | Current advance angle measured from the +d axis (90 = pure q-axis current) |
 | `em_rpm` | 3000.0 | rpm | illustrative |  | Speed for torque runs (no eddy regions) |

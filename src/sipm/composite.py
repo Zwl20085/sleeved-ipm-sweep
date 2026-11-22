@@ -48,6 +48,7 @@ import numpy as np
 __all__ = [
     "Fibre", "Matrix", "Strength", "Lamina", "Laminate", "LayerStack",
     "lamina", "angle_ply", "layer_stack", "sleeve_params", "failure_indices", "ply_failure", "sleeve_failure",
+    "ply_axial_conductivity", "axial_conductivity",
     "FIBRES", "MATRICES", "STRENGTHS", "MODELS", "SLEEVE_KEYS", "CRITERIA",
 ]
 
@@ -534,6 +535,54 @@ def sleeve_params(x: Lamina | Laminate | LayerStack) -> dict[str, float]:
         "sleeve_cte_radial": x.cte_radial,
         "sleeve_cte_axial": x.cte_axial,
     }
+
+
+# ---------------------------------------------------------------------------------------------------------
+# electrical conductivity (2D sleeve eddy-current model)
+# ---------------------------------------------------------------------------------------------------------
+def ply_axial_conductivity(sigma_fibre: float, sigma_transverse: float, angle_deg: float) -> float:
+    """Axial (z) conductivity [S/m] of a unidirectional ply wound at ``angle_deg`` from the hoop direction.
+
+    In ply axes the conductivity tensor is diag(sigma_L, sigma_T, sigma_T) (1 = fibre; the ply is
+    transversely isotropic, so 2 and 3 conduct alike). With the fibre along f = (cos t, sin t) in
+    (hoop, axial), the in-plane tensor is sigma_T I + (sigma_L - sigma_T) f f^T, whose components are::
+
+        sigma_hoop,hoop   = sigma_L cos^2 t + sigma_T sin^2 t
+        sigma_axial,axial = sigma_L sin^2 t + sigma_T cos^2 t
+        sigma_hoop,axial  = (sigma_L - sigma_T) sin t cos t
+
+    The axial component is returned: t = 0 (hoop winding) gives sigma_T, t = 90 deg (axial fibre)
+    sigma_L. The off-diagonal term changes sign with t, so it cancels between the +t and -t plies of a
+    balanced winding, and the +/- pair has the same axial conductivity as one ply.
+    """
+    for name, v in (("sigma_fibre", sigma_fibre), ("sigma_transverse", sigma_transverse)):
+        if not (math.isfinite(v) and v >= 0):
+            raise ValueError(f"{name} must be finite and >= 0, got {v!r}")
+    if not 0.0 <= angle_deg <= 90.0:
+        raise ValueError(f"winding angle must be in [0, 90] deg, got {angle_deg!r}")
+    t = math.radians(angle_deg)
+    s, c = math.sin(t), math.cos(t)
+    return float(sigma_fibre * s * s + sigma_transverse * c * c)
+
+
+def axial_conductivity(sigma_fibre: float, sigma_transverse: float, angles_deg, fractions=None) -> float:
+    """Effective axial conductivity [S/m] of a (layered) +/- angle-ply sleeve.
+
+    Each layer conducts axially with :func:`ply_axial_conductivity` at its winding angle. The layers
+    are side by side for an axial current, i.e. in parallel under a common axial electric field, so
+    the effective value is the thickness-weighted mean ``sum(f_i sigma_zz,i)`` (``fractions``
+    normalised; None = equal shares). One fibre/matrix system for all layers (as ``sleeve_layers``).
+    The common-field assumption is the thin-sleeve, resistance-limited one under which the 2D model
+    is used (docs/methods.md, 2.1): the field then hardly varies through the sleeve thickness.
+    """
+    angles = [float(a) for a in np.atleast_1d(angles_deg)]
+    if not angles:
+        raise ValueError("axial_conductivity: need at least one layer angle")
+    w = np.ones(len(angles)) if fractions is None else np.asarray(fractions, dtype=float)
+    if len(w) != len(angles) or not (np.all(np.isfinite(w)) and np.all(w > 0)):
+        raise ValueError("axial_conductivity: need one finite fraction > 0 per layer")
+    w = w / w.sum()
+    return float(sum(wi * ply_axial_conductivity(sigma_fibre, sigma_transverse, a) for a, wi in zip(angles, w)))
 
 
 # ---------------------------------------------------------------------------------------------------------

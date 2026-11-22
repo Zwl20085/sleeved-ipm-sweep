@@ -267,6 +267,23 @@ def test_em_point(session, topo):
 
 
 @need_aedt
+def test_em_point_conducting_sleeve(session):
+    """2D sleeve eddy loss at 1e4 S/m axial (docs/validation.md section 13): converged period average,
+    loss of the validated size, torque lowered by about the drag torque loss / omega."""
+    p0 = default_params("sleeved_bridged")
+    r0 = session.solve(p0)
+    r = session.solve(p0.replace(sleeve_sigma_transverse=1e4))
+    drag = r["sleeve_loss_w"] / (2 * math.pi * p0.em_rpm / 60)
+    print(f"[em conducting sleeve] loss {r['sleeve_loss_w']:.4f} W (change over last period "
+          f"{r['sleeve_loss_rel_change']:.2e}), torque {r0['torque_avg']:.4f} -> {r['torque_avg']:.4f} N m, "
+          f"drag torque {drag:.4f} N m, wall {r['em_wall_s']:.1f} s")
+    assert r["sleeve_loss_rel_change"] < 1e-3
+    assert 4.8 < r["sleeve_loss_w"] < 5.3
+    assert r["sleeve_sigma_axial"] == 1e4 and r["sleeve_skin_ratio"] > 10
+    assert 0.5 * drag < r0["torque_avg"] - r["torque_avg"] < 1.5 * drag
+
+
+@need_aedt
 def test_em_open_circuit(session):
     from sipm.validation import open_circuit_check
 
