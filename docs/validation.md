@@ -416,3 +416,88 @@ converged, 12.5-20.5 s each; stresses in MPa):
   angle although the homogenised hoop stress falls.
 * The +/-theta plies of the hot points carry the ply-to-ply thermal mismatch as well
   (methods.md section 4.4); cure residual stress is not included.
+
+## 11. Load cases and lift-off speed
+
+**Six load cases, default bridge-retained point** (`mech_cases` = all six; 20000 rpm rated,
+24000 rpm overspeed (`overspeed_factor` 1.2), cold 20 degC = the fitting temperature, hot
+`mech_temperature` = 120 degC; 0.1 mm interference, frictionless sleeve, bonded magnets;
+stresses in MPa). Six MAPDL runs, 12.3-14.4 s each, 80 s for the point:
+
+| case | `svm_lam_max` (section) | magnet peak | max sleeve hoop | min / max sleeve radial | contact p min / max | open sleeve contact | max-stress index | Tsai-Wu safety factor |
+|---|---|---|---|---|---|---|---|---|
+| `standstill_cold` | 37.3 (`bridge2`) | 19.3 | 176.4 | -4.40 / 0.014 | 2.620 / 4.30 | 0 | 0.088 | 11.25 |
+| `standstill_hot` | 115.6 (`bridge2`) | 225.1 | 312.4 | -8.57 / 0.041 | 5.074 / 8.47 | 0 | 0.156 | 6.38 |
+| `rated_cold` | 253.3 (`qhole`) | 199.6 | 223.9 | -4.63 / 0.020 | 2.576 / 4.57 | 0 | 0.112 | 8.92 |
+| `rated_hot` | 274.3 (`qhole`) | 369.2 | 356.6 | -8.50 / 0.041 | 4.970 / 8.42 | 0 | 0.178 | 5.61 |
+| `overspeed_cold` | 374.4 (`qhole`) | 294.6 | 247.6 | -4.85 / 0.026 | 2.234 / 4.82 | 0 | 0.124 | 8.08 |
+| `overspeed_hot` | 395.4 (`qhole`) | 439.0 | 376.1 | -8.58 / 0.042 | 4.781 / 8.40 | 0 | 0.188 | 5.31 |
+
+`rated_cold` reproduces the single default point of section 2 (223.920 MPa hoop, 253.3 MPa
+headline) and `rated_hot` the 100 K point there. The envelope: `svm_lam_max__worst` 395.4,
+`sh_sleeve_max__worst` 376.1, `sr_sleeve_max__worst` 0.042, every failure index and
+`sleeve_sf__worst` 5.31, all governed by `overspeed_hot`; `contact_p_min__worst` 2.234 MPa
+by `overspeed_cold`; `sleeve_open_fraction__worst` 0 (tie, `standstill_cold`). Heating raises
+the interface pressure at every speed (the steel grows into the sleeve), so the hot cases
+load the sleeve most and the cold ones are closest to lift-off. The same point with the case
+list reversed gives identical columns; the cases are solved in the same fixed order, and the
+only differences, in the failure indices at the 1e-12 relative level, are the run-to-run
+round-off of the parallel solver in the node file.
+
+**Lift-off, closed form against FE (disc + ring of section 1).** `ring_liftoff_check`:
+orthotropic ring, cases standstill and 20000 rpm at 20 degC and at 120 degC, lift-off
+extrapolated element by element (methods.md section 3.1) against `sipm.analytic.liftoff_speed`:
+
+| temperature | FE (rpm) | closed form (rpm) | error |
+|---|---|---|---|
+| 20 degC (= fitting) | 56 193.5 | 56 193.7 | -3.4e-6 |
+| 120 degC | 76 958.7 | 76 958.9 | -2.7e-6 |
+
+The extrapolation is a ratio of pressures, so the 0.11 % discretisation error of the pressure
+itself (section 1) cancels.
+
+**Lift-off of the rotors, checked by direct runs.** `liftoff_check`: cases standstill, rated
+and overspeed at one temperature, the extrapolated speed, then single-case runs at that speed
+and at 0.95 x that speed (min contact pressure over the 56 / 53 sleeve contact elements;
+`linearity` = largest deviation of a closed element's FE pressure from its fitted line,
+relative to its standstill pressure):
+
+| rotor, temperature | lift-off (rpm), cases used | p min at standstill | at lift-off: p min, elements open | at 0.95 x: p min, elements open | linearity |
+|---|---|---|---|---|---|
+| bridge-retained, 20 degC | 39 357, standstill + overspeed | 2.620 | 0.026 (1.0 %), 1 | 0.345, 0 | 2.8e-5 at 20000 rpm, 4.0e-4 at 0.95 x |
+| bridge-retained, 120 degC | 51 553, standstill + overspeed | 5.074 | 0.044 (0.9 %), 1 | 0.590, 0 | |
+| bridgeless, 20 degC | 23 937, standstill + rated (overspeed already open) | 1.126 | 0.340, 1 | 0.400, 1 | 8.7 % at 20000 rpm |
+| bridgeless, 120 degC | 0: open at standstill | | | | |
+
+Bridge-retained rotor: the linear model holds. At the extrapolated speed the governing element
+(at the d-axis, theta = 0.2 deg; not the element with the lowest pressure at standstill) is the
+first to open and the minimum pressure is 1 % of its standstill value; at 0.95 x every element
+is closed. The prediction of a closed element's pressure from the standstill and overspeed runs
+is good to 3e-5 at 20000 rpm and 4e-4 at 0.95 x the lift-off speed (0.5 % at the lift-off
+speed itself, where the first element is partly open), i.e. the lift-off speed is accurate to
+about 0.5 %.
+
+**Bridgeless rotor: the linearity does not hold.** Its three lamination pieces are held only by
+the sleeve and the bonded magnets, and the OD has openings between them (11.39-12.39 deg and
+19.05-20.05 deg). The contact elements at the piece edges next to the openings (theta 11.2, 12.6
+and 18.9 deg) are partly open: the pieces tilt under load, so the contact zone at each edge
+changes with speed and temperature. Cold, every element is closed at standstill and 20000 rpm and one
+edge element (12.6 deg) is partly open at 24000 rpm; the lines through standstill and 24000 rpm
+miss the pressures of the closed elements at 20000 rpm by up to 8.7 % of their standstill
+pressure, against 3e-5 in the bridge-retained rotor. The extrapolation from standstill and
+20000 rpm gives 23 937 rpm, but that edge element is already open at 0.95 x that speed
+(22 740 rpm): the true first opening lies below it. Hot (120 degC), two edge
+elements (11.2 and 18.9 deg) are already open at standstill, so the extrapolation gives 0 by the
+definition (first point of the interface to open), although those edges close again with speed (at
+20000 rpm hot every element is closed, minimum 1.45 MPa) and the third edge element (12.6 deg)
+opens only between 24000 and 42 300 rpm. The pressure is not monotonic in speed here, which no
+two-point line can represent. The bridgeless rows above were computed before this result was
+known; `liftoff_rpm_cold` / `_hot` are now NaN for `sleeved_bridgeless`, with the reason in
+`liftoff_basis_*`. For this rotor read `contact_p_min__<case>` and
+`sleeve_open_fraction__<case>` instead.
+
+**Three-point check.** When three or more speeds at one temperature have fully closed contact,
+the middle ones are compared with the two-point lines element by element and the basis is
+flagged above 1 % of the element's standstill pressure. In the six-case point above
+(standstill, rated and overspeed all closed) the rated case deviates by at most 2.8e-5 (cold),
+so no flag is set; the bridgeless rotor's 8.7 % would be flagged.

@@ -46,6 +46,7 @@ MECH_ONLY = {
     "mech_ref_temperature",
     "sleeve_fibre", "sleeve_matrix", "sleeve_vf", "sleeve_micromechanics", "sleeve_wind_angle",
     "sleeve_Xt", "sleeve_Xc", "sleeve_Yt", "sleeve_Yc", "sleeve_S",
+    "mech_cases", "overspeed_factor", "mech_temperature_cold",
 }
 EM_VARIABLES = {"gamma", "current_rms"}
 

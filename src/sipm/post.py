@@ -89,7 +89,37 @@ LABELS = {
     "sleeve_fi_hashin_fibre": "Hashin fibre failure index, sleeve (-)",
     "sleeve_fi_hashin_matrix": "Hashin matrix failure index, sleeve (-)",
     "sleeve_sf": "Tsai-Wu strength ratio (safety factor), sleeve (-)",
+    "sleeve_open_fraction": "Open fraction of sleeve contact (-)",
+    "contact_p_min": "Min contact pressure, sleeve/lamination (MPa)",
+    "contact_p_max": "Max contact pressure, sleeve/lamination (MPa)",
+    "liftoff_rpm_cold": "Lift-off speed, cold (rpm)",
+    "liftoff_rpm_hot": "Lift-off speed, hot (rpm)",
+    "overspeed_factor": "Overspeed factor (-)",
+    "mech_temperature_cold": "Rotor temperature, cold cases (°C)",
 }
+
+
+def _load_case_labels() -> dict[str, str]:
+    """Labels of the load-case columns (sipm.loadcases): '<output>__<case>' and the worst-case
+    envelope '<output>__worst', built from the label of the output."""
+    from .loadcases import ENVELOPE, case_column, worst_column
+    from .params import MECH_CASES
+
+    out = {}
+    for name in [k for k in LABELS if k.startswith(("svm_", "sh_", "sr_", "tau_", "sleeve_fi_", "sleeve_sf",
+                                                     "sleeve_open", "contact_"))]:
+        quantity, unit = LABELS[name][: LABELS[name].rindex("(")].strip(), LABELS[name][LABELS[name].rindex("("):]
+        for case in MECH_CASES:
+            out[case_column(name, case)] = f"{quantity}, {case.replace('_', ' ')} {unit}"
+    for name, how in ENVELOPE:
+        lab = LABELS[name]
+        quantity, unit = lab[: lab.rindex("(")].strip(), lab[lab.rindex("("):]
+        extreme = "highest" if how == "max" else "lowest"
+        out[worst_column(name)] = f"{quantity}, {extreme} over load cases {unit}"
+    return out
+
+
+LABELS.update(_load_case_labels())
 
 # Words used for a topology in legends (series names).
 TOPOLOGY_NAMES = {

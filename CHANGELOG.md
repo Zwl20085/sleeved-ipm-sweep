@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Load cases as outputs and the lift-off speed
+
+* **Load-case set.** New parameters `mech_cases` (default '' = the single case `mech_rpm` at
+  `mech_temperature`, deck and columns unchanged), `overspeed_factor` (1.2) and
+  `mech_temperature_cold` (20 degC). `mech_cases` lists cases from `standstill_cold`,
+  `standstill_hot`, `rated_cold`, `rated_hot`, `overspeed_cold`, `overspeed_hot`; each is its
+  own MAPDL run of the single-case deck (`Params.for_case`, `sipm.mapdl.solve_mech_cases`), so
+  a case's result does not depend on the other cases or their order, also with friction.
+  Columns: `<output>__<case>` for every output and case; the un-suffixed columns hold the case
+  named in `mech_case` (`rated_hot` if requested, else the first listed); worst-case envelope
+  `<output>__worst` with the governing case in `<output>__worst_case` for `svm_lam_max`,
+  `sh_sleeve_max`, `sr_sleeve_max`, the sleeve failure indices, `sleeve_sf`,
+  `sleeve_open_fraction` and `contact_p_min` (`sipm.loadcases`). TOML `[base]` may give the
+  cases as an array; `examples/configs/mech_load_cases.toml`; plot labels for the new columns
+  and stress-line plots of the worst case in `sipm plot`.
+* **Lift-off speed.** `liftoff_rpm_cold` / `liftoff_rpm_hot` (with `liftoff_basis_*`): the
+  speed at which the first sleeve contact element's pressure reaches zero, extrapolated element
+  by element (p = p0 - c omega^2, exact while the contact is closed and frictionless and the
+  magnets bonded) from two closed cases at the same temperature; 0 if open at standstill, NaN
+  without two closed cases, with friction or for `sleeved_bridgeless` (its contact is not
+  linear in speed), `inf` if the pressure does not fall with speed. With three or more closed
+  speeds the middle ones are checked against the line and the basis is flagged above 1 % of
+  the standstill pressure.
+  Decks of a load-case set export the per-element contact pressure
+  (`sipm_contact_elems.txt`, `parse_contact_elements`); single-case decks are byte-identical
+  to before. Closed form `sipm.analytic.liftoff_speed` (with temperature) and
+  `coupled_pressure`; `sipm validate ring-liftoff` / `liftoff`. Validation (docs/validation.md
+  section 11): FE against closed form on the ring 3e-6; on the bridge-retained rotor a direct run
+  at the extrapolated speed opens the first element (about 0.5 %); on the bridgeless rotor the
+  linearity fails (8.7 % deviation, edges open at standstill when hot).
+* `write_deck` gains the keyword `contact_elements` (default False). New point keys only when
+  a new parameter leaves its default, so existing caches stay valid.
+
 ### Composite sleeve: thermal load case, sleeve stress field, ply failure
 
 * **Thermal load case.** New parameters `lam_cte`, `pm_cte`, `sleeve_cte_hoop`,

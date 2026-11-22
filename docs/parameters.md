@@ -128,6 +128,9 @@ measure what similar names measured before the rebase:
 | `mech_mesh_fine` | 0.15 | mm | illustrative |  | Element size on short lines (fillets, bridges, lugs) |
 | `magnet_contact` | bonded | - | illustrative |  | Magnet/pocket contact in the stress model: 'bonded' (as the original Workbench model; the designed clearance is bridged by the bond, see docs/methods.md) or 'frictional' (open clearance, mu_magnet; not supported for sleeved_bridgeless) |
 | `stress_corner_margin` | 0.5 | mm | illustrative |  | Named stress sections (svm_lam_max) leave out this length at both ends of each section, where it meets a sharp corner of the outline |
+| `mech_cases` |  | - | illustrative |  | Comma-separated mechanical load cases solved for each point, from standstill_cold, standstill_hot, rated_cold, rated_hot, overspeed_cold, overspeed_hot ('' = the single case mech_rpm at mech_temperature, as before). Speeds: standstill 0, rated mech_rpm, overspeed overspeed_factor x mech_rpm; temperatures: hot mech_temperature, cold mech_temperature_cold. Each output gets one column per case (e.g. sh_sleeve_max__overspeed_hot), plus worst-case envelope columns and the lift-off speeds (docs/methods.md, 3.1) |
+| `overspeed_factor` | 1.2 | - | illustrative |  | Overspeed load cases: speed = this factor x mech_rpm (>= 1) |
+| `mech_temperature_cold` | 20.0 | degC | illustrative |  | Uniform rotor temperature of the '_cold' load cases (the '_hot' cases use mech_temperature); interference is defined at mech_ref_temperature |
 
 Topology-specific overrides of the defaults above:
 

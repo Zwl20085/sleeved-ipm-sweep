@@ -54,6 +54,11 @@ SLEEVE_FILE = "sipm_sleeve_nodes.txt"   # sleeve corner nodes: r, theta, stresse
 # the nodal-averaged stresses (MPa) in the cylindrical system: SX radial, SY hoop, SZ axial,
 # SXY radial-hoop shear
 SLEEVE_COLUMNS = ("r", "theta", "s_radial", "s_hoop", "s_axial", "s_shear")
+# per-element sleeve contact export (decks written with contact_elements=True): element number,
+# centroid x, y (mm, global), contact pressure CONT,PRES (MPa, > 0 compressive; the quantity
+# behind contact_p_min) and contact status CONT,STAT (0/1 open, 2 sliding, 3 sticking)
+CONTACT_FILE = "sipm_contact_elems.txt"
+CONTACT_COLUMNS = ("elem", "x", "y", "pres", "status")
 UNSUPPORTED_FRICTIONAL = (
     "magnet_contact='frictional' is not supported for sleeved_bridgeless: the loose magnets in "
     "open-clearance contact do not converge reliably in that rotor (docs/validation.md); use "
@@ -142,8 +147,15 @@ def _loop_cmds(loop: Loop, kbase: int, lbase: int, area: int, name: str) -> list
     return out
 
 
-def write_deck(p: Params, model: MechModel, path: str | Path, results_file: str = RESULTS_FILE) -> Path:
-    """Write the APDL input deck for one mechanical point and return its path."""
+def write_deck(p: Params, model: MechModel, path: str | Path, results_file: str = RESULTS_FILE,
+               contact_elements: bool = False) -> Path:
+    """Write the APDL input deck for one mechanical point and return its path.
+
+    The deck solves the single load case ``p.mech_rpm`` at ``p.mech_temperature``
+    (``p.mech_cases`` is handled by :func:`solve_mech`, one deck per case, see
+    :meth:`Params.for_case`). ``contact_elements`` adds the export of the per-element pressure
+    and status of the sleeve contact to :data:`CONTACT_FILE` (used for the lift-off speed);
+    without it the deck is the same as before that option existed."""
     if p.magnet_contact == "frictional" and p.is_bridgeless and model.magnets:
         raise ValueError(UNSUPPORTED_FRICTIONAL)
     path = Path(path)
@@ -419,6 +431,22 @@ def write_deck(p: Params, model: MechModel, path: str | Path, results_file: str 
         a("ESORT,ETAB,CPRS")
         a("*GET,CP_MAX,SORT,,MAX")
         a("*GET,CP_MIN,SORT,,MIN")
+        if contact_elements:
+            # per-element contact pressure and status of the sleeve contact (lift-off extrapolation)
+            a("*GET,CEMX,ELEM,0,NUM,MAXD")
+            for arr in ("CMSK", "CEID", "CEX", "CEY", "CEP", "CES"):
+                a(f"*DIM,{arr},ARRAY,CEMX")
+            a("*VGET,CMSK(1),ELEM,1,ESEL")
+            a("*VFILL,CEID(1),RAMP,1,1")
+            a("*VGET,CEX(1),ELEM,1,CENT,X")
+            a("*VGET,CEY(1),ELEM,1,CENT,Y")
+            a("*VGET,CEP(1),ELEM,1,ETAB,CPRS")
+            a("*VGET,CES(1),ELEM,1,ETAB,CSTA")
+            a(f"*CFOPEN,{Path(CONTACT_FILE).stem},{Path(CONTACT_FILE).suffix.lstrip('.')}")
+            a("*VMASK,CMSK(1)")
+            a("*VWRITE,CEID(1),CEX(1),CEY(1),CEP(1),CES(1)")
+            a("(5E21.12)")
+            a("*CFCLOS")
         a("*GET,NC_ALL,ELEM,0,COUNT")
         a("ESEL,R,ETAB,CSTA,-1,1.5")      # status 0/1 = open
         a("*GET,NC_OPEN,ELEM,0,COUNT")
@@ -474,6 +502,18 @@ def parse_sleeve_nodes(path: str | Path) -> dict[str, np.ndarray]:
     if data.shape[1] != len(SLEEVE_COLUMNS):
         raise ValueError(f"{path}: expected {len(SLEEVE_COLUMNS)} columns, got {data.shape[1]}")
     return {name: data[:, i].copy() for i, name in enumerate(SLEEVE_COLUMNS)}
+
+
+def parse_contact_elements(path: str | Path) -> dict[str, np.ndarray]:
+    """Read the sleeve contact element file (:data:`CONTACT_FILE`): one 1-D array per
+    :data:`CONTACT_COLUMNS` entry, sorted by element number (``elem`` as int)."""
+    data = np.loadtxt(path, ndmin=2)
+    if data.shape[1] != len(CONTACT_COLUMNS):
+        raise ValueError(f"{path}: expected {len(CONTACT_COLUMNS)} columns, got {data.shape[1]}")
+    data = data[np.argsort(data[:, 0], kind="stable")]
+    out = {name: data[:, i].copy() for i, name in enumerate(CONTACT_COLUMNS)}
+    out["elem"] = np.rint(out["elem"]).astype(int)
+    return out
 
 
 def sleeve_failure_outputs(p: Params, nodes: dict[str, np.ndarray]) -> dict:
@@ -532,7 +572,8 @@ def run_deck(deck: Path, workdir: Path, cfg: Config, job: str = "sipm", on_start
     """Run MAPDL in batch on ``deck`` inside ``workdir``; return the results-file path."""
     exe = cfg.resolved_mapdl()
     workdir.mkdir(parents=True, exist_ok=True)
-    for f in (workdir / RESULTS_FILE, workdir / NODES_FILE, workdir / SLEEVE_FILE, workdir / f"{job}.lock"):
+    for f in (workdir / RESULTS_FILE, workdir / NODES_FILE, workdir / SLEEVE_FILE, workdir / CONTACT_FILE,
+              workdir / f"{job}.lock"):
         if f.exists():
             f.unlink()
     out = workdir / f"{job}.out"
@@ -613,6 +654,8 @@ def solve_mech(p: Params, cfg: Config | None = None, workdir: str | Path | None 
     sleeve, ``r["_sleeve_nodes"]`` holds the per-node arrays of :func:`parse_sleeve_nodes`
     (corner nodes; the file is deleted with the other solver files unless
     ``cfg.keep_mapdl_files``). Like ``_raw`` it is not written to the sweep cache.
+
+    With ``p.mech_cases`` set the point is a load-case set: see :func:`solve_mech_cases`.
     """
     cfg = cfg or Config()
     t0 = time.time()
@@ -620,8 +663,51 @@ def solve_mech(p: Params, cfg: Config | None = None, workdir: str | Path | None 
         rp = build_rotor(p)
         model = mech_model_from_rotor(rp)
     wd = Path(workdir) if workdir else cfg.workdir / "mech_single"
+    if p.mech_cases:
+        return solve_mech_cases(p, cfg, wd, model, on_start)
+    return _solve_single(p, cfg, wd, model, on_start, t0=t0)
+
+
+def solve_mech_cases(p: Params, cfg: Config | None = None, workdir: str | Path | None = None,
+                     model: MechModel | None = None, on_start=None) -> dict:
+    """Solve the load cases of ``p.mech_cases`` and combine them (:func:`sipm.loadcases.combine`).
+
+    Each case is its own MAPDL run of the single-case deck (:meth:`Params.for_case`: speed and
+    temperature of the case), in ``<workdir>/<case>``, solved in the canonical order of
+    :data:`sipm.params.MECH_CASES`; cases with the same speed and temperature are solved once.
+    Every case is loaded from the fitted state in one load step, as a single point is, so a
+    case's result does not depend on which other cases are requested or on their order (with or
+    without friction), and a case that fails to converge cannot spoil the start of another. The
+    decks export the per-element sleeve contact pressures for the lift-off speed. A failing case
+    fails the whole point (MapdlError naming the case)."""
+    from . import loadcases
+
+    cfg = cfg or Config()
+    t0 = time.time()
+    if model is None:
+        model = mech_model_from_rotor(build_rotor(p))
+    wd = Path(workdir) if workdir else cfg.workdir / "mech_single"
+    solved: dict[tuple[float, float], dict] = {}
+    results = {}
+    for case in loadcases.canonical(p.mech_case_list):
+        q = p.for_case(case)
+        key = (q.mech_rpm, q.mech_temperature)
+        if key not in solved:
+            try:
+                solved[key] = _solve_single(q, cfg, wd / case, model, on_start,
+                                            contact_elements=model.sleeve is not None)
+            except MapdlError as e:
+                raise MapdlError(f"load case {case} ({q.mech_rpm:g} rpm, {q.mech_temperature:g} degC): {e}") from e
+        results[case] = solved[key]
+    return loadcases.combine(p, results, wall_s=time.time() - t0)
+
+
+def _solve_single(p: Params, cfg: Config, wd: Path, model: MechModel, on_start=None,
+                  contact_elements: bool = False, t0: float | None = None) -> dict:
+    """One MAPDL run of the single-case deck of ``p`` (``p.mech_cases`` is not looked at)."""
+    t0 = time.time() if t0 is None else t0
     wd.mkdir(parents=True, exist_ok=True)
-    deck = write_deck(p, model, wd / "sipm.inp")
+    deck = write_deck(p, model, wd / "sipm.inp", contact_elements=contact_elements)
     res_path = run_deck(deck, wd, cfg, on_start=on_start)
     raw = parse_results(res_path)
     if raw.get("done") != 1:
@@ -672,15 +758,20 @@ def solve_mech(p: Params, cfg: Config | None = None, workdir: str | Path | None 
     if model.sleeve is not None:
         r["_sleeve_nodes"] = parse_sleeve_nodes(wd / SLEEVE_FILE)
         r.update(sleeve_failure_outputs(p, r["_sleeve_nodes"]))
+        if contact_elements:
+            r["_contact_elems"] = parse_contact_elements(wd / CONTACT_FILE)
     if not cfg.keep_mapdl_files:
         _cleanup(wd, "sipm")
         (wd / NODES_FILE).unlink(missing_ok=True)
         (wd / SLEEVE_FILE).unlink(missing_ok=True)
+        (wd / CONTACT_FILE).unlink(missing_ok=True)
     return r
 
 
 def copy_deck_only(p: Params, path: str | Path) -> Path:
-    """Write the deck for a design without running it (inspection / manual runs)."""
+    """Write the deck for a design without running it (inspection / manual runs). With
+    ``mech_cases`` set this is the deck of ``mech_rpm`` at ``mech_temperature``; the deck of one
+    case is ``copy_deck_only(p.for_case(case), path)``."""
     rp = build_rotor(p)
     model = mech_model_from_rotor(rp)
     path = Path(path)
@@ -689,6 +780,6 @@ def copy_deck_only(p: Params, path: str | Path) -> Path:
 
 
 __all__ = ["MechModel", "mech_model_from_rotor", "mech_model_ring", "write_deck", "parse_results",
-           "parse_sleeve_nodes", "sleeve_failure_outputs", "run_deck", "solve_mech", "errors_from_output",
-           "MapdlError", "copy_deck_only",
-           "SLEEVE_FILE", "SLEEVE_COLUMNS"]
+           "parse_sleeve_nodes", "parse_contact_elements", "sleeve_failure_outputs", "run_deck", "solve_mech",
+           "solve_mech_cases", "errors_from_output", "MapdlError", "copy_deck_only",
+           "SLEEVE_FILE", "SLEEVE_COLUMNS", "CONTACT_FILE", "CONTACT_COLUMNS"]
