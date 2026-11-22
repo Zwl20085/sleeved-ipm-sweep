@@ -131,7 +131,7 @@ Defaults, bonded magnets, 0.1 mm interference, 20000 rpm; global / fine element 
 
 | mesh (mm) | nodes | `bridge1` | `bridge2` | `rib1` | `web2` | `qhole` | global lamination peak | magnet peak | max sleeve hoop | wall |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 0.8 / 0.3 | 9 693 | 104.1 | 97.4 | 12.5 | 73.6 | 252.0 | 441.4 | 187.2 | 222.9 | 9 s |
+| 0.8 / 0.3 | 9 618 | 104.1 | 97.3 | 12.5 | 73.6 | 252.0 | 441.4 | 187.2 | 222.6 | 9 s |
 | 0.5 / 0.15 (default) | 25 160 | 103.9 | 97.9 | 13.0 | 76.4 | 253.3 | 691.1 | 199.6 | 223.9 | 20 s |
 | 0.3 / 0.08 | 73 496 | 105.0 | 99.0 | 12.9 | 79.5 | 253.7 | 669.2 | 306.0 | 224.4 | 53 s |
 | 0.2 / 0.04 | 200 675 | 106.5 | 99.8 | 12.9 | 80.9 | 254.7 | 823.9 | 682.6 | 225.2 | 138 s |
@@ -147,8 +147,11 @@ Defaults, bonded magnets, 0.1 mm interference, 20000 rpm; global / fine element 
 | 0.2 / 0.04 | 136 117 | 8.9 | 5.1 | 4.3 | 4.2 | 323.5 | 849.2 | 655.0 | 239.0 | 64 s |
 | change between the two finest | | +7.5 % | +10.4 % | +3.1 % | -4.5 % | +0.8 % | +38 % | +132 % | +0.5 % | |
 
-(bridgeless rows re-run with the bore arc of the thin sleeve sized like the lamination OD,
-methods.md section 3, item 2; the bridge-retained rows are unchanged by it)
+(re-run with the bore arc of a sleeve thinner than 3 x `mech_mesh` sized like the lamination OD,
+methods.md section 3, item 2: every bridgeless row, and the 0.8 mm bridge-retained row, where the
+1.5 mm sleeve is thinner than 3 x 0.8 mm; before: 9 693 nodes, `bridge2` 97.4, sleeve hoop
+222.9 MPa, the other columns unchanged at this precision. The finer bridge-retained rows are
+unchanged by it)
 
 (stresses in MPa)
 
@@ -198,6 +201,10 @@ No-load runs, defaults, 3000 rpm, 360 electrical degrees in 2-degree steps:
   differs by 1.0 deg from the phase of d(psi)/dt, half a time step of the backward difference.
 * The EMF amplitude equals omega x psi_1 (bridge-retained: 2 pi 200 Hz x 0.07898 Wb =
   99.25 V).
+* The open-circuit and no-load field runs model the sleeve non-conducting whatever its
+  conductivity (methods.md section 2.1): the bridge-retained run with `sleeve_sigma_fibre` =
+  3e4 and `sleeve_sigma_transverse` = 1e4 S/m (axial 1e4 S/m) gives the same EMF,
+  99.240 / 99.239 / 99.244 V (`test_em_open_circuit_conducting_sleeve`).
 
 ## 6. Torque against current advance angle (MTPA), one point per topology, ampere-turns
 
@@ -280,10 +287,10 @@ at every point:
 | sleeve (mm) | interference (mm) | `bridge1` | `bridge2` | `rib1` | `web2` | `qhole` = headline | max sleeve hoop | open sleeve contact |
 |---|---|---|---|---|---|---|---|---|
 | 1.0 | 0.0 | 102.7 | 100.8 | 18.6 | 88.5 | 278.8 | 47.1 | 0.719 |
-| 1.0 | 0.1 | 103.9 | 99.0 | 15.2 | 81.5 | 264.3 | 224.4 | 0 |
-| 1.0 | 0.2 | 110.6 | 105.4 | 11.8 | 74.5 | 249.7 | 398.5 | 0 |
-| 1.0 | 0.3 | 117.6 | 111.9 | 8.4 | 67.6 | 235.2 | 574.0 | 0 |
-| 1.0 | 0.4 | 124.7 | 118.6 | 7.1 | 60.6 | 220.6 | 749.6 | 0 |
+| 1.0 | 0.1 | 103.8 | 99.0 | 15.2 | 81.5 | 264.3 | 224.5 | 0 |
+| 1.0 | 0.2 | 110.5 | 105.4 | 11.8 | 74.5 | 249.7 | 398.4 | 0 |
+| 1.0 | 0.3 | 117.6 | 111.8 | 8.3 | 67.6 | 235.2 | 573.9 | 0 |
+| 1.0 | 0.4 | 124.7 | 118.6 | 7.1 | 60.6 | 220.6 | 749.4 | 0 |
 | 1.5 | 0.0 | 101.8 | 98.2 | 18.1 | 86.9 | 275.2 | 46.5 | 0.714 |
 | 1.5 | 0.1 | 103.9 | 97.9 | 13.0 | 76.4 | 253.3 | 223.9 | 0 |
 | 1.5 | 0.2 | 113.3 | 106.1 | 7.8 | 65.9 | 231.3 | 399.7 | 0 |
@@ -300,7 +307,13 @@ outer bridges rise slowly with it. The sleeve hoop stress is set mainly by the i
 interference about 72 % of the sleeve contact elements open at speed. With a 400 MPa example
 yield strength every point meets the stress limit, so the feasible region is bounded by the
 interference limit (interference <= 0.2 x sleeve thickness) alone. Global lamination peak
-397-756 MPa and magnet peak 125-217 MPa (mesh-dependent). Wall time 14-26 s per point.
+397-756 MPa and magnet peak 125-217 MPa (mesh-dependent). Wall time 14-19 s per point. The
+1.0 mm rows were re-solved after the bore arc of a sleeve thinner than 3 x `mech_mesh` was sized
+like the lamination OD (methods.md section 3, item 2): the section peaks moved by at most
+0.03 MPa, the sleeve hoop stress by at most 0.2 MPa, the most compressive sleeve radial stress
+by up to 12 % (-12.72 to -11.18 MPa at 0.4 mm), the peak contact pressure by up to 3.4 %, 25 866
+to 25 790 nodes; the 1.5
+and 2.0 mm rows are bit-identical.
 
 **Mechanical, sleeved bridgeless** (`mech_sleeved_bridgeless.toml`, 20000 rpm, bonded
 magnets, all 6 points converged; `examples/data/sample_mech_bridgeless.csv`). Section peaks
@@ -330,7 +343,7 @@ Peak RSS of the solver process tree started by the runner (`solver_rss_peak_gb`)
 
 * EM points (one-pole Maxwell model, ansysedt + solver processes): 0.862-0.889 GB over the
   two sleeved EM sweeps (16 points).
-* MAPDL points (default mesh, bonded magnets): 0.47-0.52 GB (bridge-retained rotor) and
+* MAPDL points (default mesh, bonded magnets): 0.47-0.54 GB (bridge-retained rotor) and
   0.39-0.40 GB (bridgeless rotor).
 
 The memory gate (4 GB free by default) and the AEDT restart every 10 points were exercised on
@@ -500,10 +513,37 @@ the definition (first point of the interface to open), although those edges clos
 opens only between 24000 and 42 300 rpm. The pressure is not monotonic in speed here, which no
 two-point line can represent. The bridgeless rows were re-run after the bore arc of its thin
 sleeve was sized like the lamination OD (methods.md section 3, item 2; before: 23 937 rpm,
-1.126 / 0.340 / 0.400 MPa, 8.7 %, two edge elements open hot at standstill), with the NaN rule
-below bypassed to obtain them; `liftoff_rpm_cold` / `_hot` are now NaN for `sleeved_bridgeless`, with the reason in
-`liftoff_basis_*`. For this rotor read `contact_p_min__<case>` and
-`sleeve_open_fraction__<case>` instead.
+1.126 / 0.340 / 0.400 MPa, 8.7 %, two edge elements open hot at standstill), with the line
+forced on to obtain them. For this rotor the line is not used; its lift-off speed is searched
+for (next paragraph).
+
+**Lift-off by search** (methods.md section 3.1; `test_mech_liftoff_search_bridgeless`,
+`test_mech_liftoff_search_reproduces_linear_bridged`). Same definition as the line: the lowest
+speed at which a contact element's pressure reaches zero.
+
+| rotor, temperature | lift-off (rpm) | bracket: pressure positive / zero (rpm) | extra runs | two-point line (rpm) |
+|---|---|---|---|---|
+| bridgeless, 20 degC (default search) | 24 414 | 24 368.6 (p min 0.012 MPa) / 24 458.6 | 2 | 23 591 (not used) |
+| bridgeless, 120 degC | 0: open at standstill | | 0 | 0 |
+| bridge-retained, 20 degC (search forced on) | 39 512 | 39 467.4 (0.011 MPa) / 39 557.4 | 3 | 39 357 |
+
+* Bridgeless, cold: all three cases have positive pressure in every element (overspeed 24 000 rpm:
+  minimum 0.079 MPa, while one edge element's contact status is already partly open), so the
+  search starts above them, from the extrapolation quadratic in speed squared through the three
+  cases, and needs two runs. The result lies above the old two-point value 23 591 rpm, at which the
+  minimum pressure was still 0.398 MPa (the direct runs above), as it must. Hot, three edge
+  elements are open at standstill: 0, as the line reports (those edges close again with speed;
+  the value says when the interface is first not fully closed, not when the sleeve stops
+  retaining the rotor).
+* Bridge-retained, forced on: the search finds 39 512 rpm against the line's 39 357 rpm, +0.39 %,
+  within the 0.5 % accuracy of the line found by the direct runs above (the governing element is
+  partly open, its pressure 0.026 MPa, at the line's speed). Each search run took 13-45 s
+  (several solver runs shared the workstation).
+* The contact status of the governing elements opens earlier than their pressure reaches zero
+  (partly open elements carry pressure on their closed part). A search on "every element sliding
+  or sticking" instead would give 21 469 rpm for the bridgeless rotor cold (between 21 437.5 and
+  21 500 rpm, 6 bisection runs) and 38 667 rpm for the bridge-retained one, 1.8 % below its line;
+  the pressure definition is the one the line and the closed form use, and is kept.
 
 **Three-point check.** When three or more speeds at one temperature have fully closed contact,
 the middle ones are compared with the two-point lines element by element and the basis is

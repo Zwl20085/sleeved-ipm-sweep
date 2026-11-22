@@ -18,7 +18,8 @@ creates a new project (geometry, mesh and setup depend on it).
 
 The sleeve is non-conducting unless its axial conductivity (``Params.sleeve_conductivity_axial``)
 is > 0; then it is a passive solid conductor with eddy effects and :meth:`MaxwellSession.solve`
-also reports the 2D sleeve eddy-current loss (docs/methods.md, 2.1).
+also reports the 2D sleeve eddy-current loss (docs/methods.md, 2.1). The open-circuit, no-load
+field and AC copper loss runs model the sleeve non-conducting whatever its conductivity.
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ MECH_ONLY = {
     "sleeve_fibre", "sleeve_matrix", "sleeve_vf", "sleeve_micromechanics", "sleeve_wind_angle",
     "sleeve_Xt", "sleeve_Xc", "sleeve_Yt", "sleeve_Yc", "sleeve_S",
     "mech_cases", "overspeed_factor", "mech_temperature_cold",
-    "sleeve_layers", "sleeve_layer_prestress",
+    "sleeve_layers", "sleeve_layer_prestress", "liftoff_search_tol",
 }
 EM_VARIABLES = {"gamma", "current_rms"}
 # Sleeve ply conductivities: the EM model sees them (and the winding angle and layer spec, which are
@@ -418,8 +419,13 @@ class MaxwellSession:
         return res
 
     def open_circuit(self, p: Params, span: float = 360.0) -> dict:
-        """No-load run over ``span`` electrical degrees: flux linkages and back-EMF."""
-        q = p.replace(current_rms=0.0)
+        """No-load run over ``span`` electrical degrees: flux linkages and back-EMF.
+
+        The sleeve is modelled non-conducting here whatever its conductivity (as in :meth:`ac_loss`):
+        the run starts from a static field, so a conducting sleeve would add the start-up transient of
+        its eddy currents to the flux linkages and EMF of the first period. Its steady eddy reaction at
+        no load is the drag of docs/validation.md section 13, not part of this check."""
+        q = _non_conducting(p.replace(current_rms=0.0))
         mode = f"open|span={span}"
         if self.key != em_model_key(q, mode):
             self._new_project(q, mode)
@@ -432,8 +438,12 @@ class MaxwellSession:
 
     def no_load_flux_density(self, p: Params) -> dict:
         """|B| at no load, rotor d-axis on the middle tooth (t = 0): mid-tooth on the d-axis,
-        mid-yoke near the q-axis, and the maximum over the stator and the rotor lamination."""
-        q = p.replace(current_rms=0.0)
+        mid-yoke near the q-axis, and the maximum over the stator and the rotor lamination.
+
+        The sleeve is modelled non-conducting (as in :meth:`open_circuit`): the field at t = 0 of a
+        transient run is a static solution, and a conducting sleeve would only add eddy currents
+        from the start-up of the run."""
+        q = _non_conducting(p.replace(current_rms=0.0))
         self._new_project(q, "fields")
         sp = build_stator(q)
         hp = math.pi / q.poles
@@ -473,7 +483,7 @@ class MaxwellSession:
 
         The sleeve is modelled non-conducting here whatever its conductivity: ``SolidLoss`` sums every
         solid conductor, so a conducting sleeve would be counted as copper loss in ``kac``."""
-        q = p.replace(em_rpm=rpm, sleeve_sigma_fibre=0.0, sleeve_sigma_transverse=0.0)
+        q = _non_conducting(p.replace(em_rpm=rpm))
         mode = f"acloss|{periods}|{steps_per_period}"
         t0 = time.time()
         if self.key != em_model_key(q, mode):
@@ -491,6 +501,12 @@ class MaxwellSession:
         return dict(rpm=rpm, p_ac=p_ac, p_dc=p_dc, kac=p_ac / p_dc,
                     torque_avg=float(np.mean(d["Moving1.Torque"][last])),
                     em_wall_s=time.time() - t0)
+
+
+def _non_conducting(p: Params) -> Params:
+    """``p`` with a non-conducting sleeve (both ply conductivities 0), for the runs that must not
+    see sleeve eddy currents (open circuit, no-load field, AC copper loss)."""
+    return p.replace(sleeve_sigma_fibre=0.0, sleeve_sigma_transverse=0.0)
 
 
 def _torque_summary(data: dict, wall_s: float) -> dict:

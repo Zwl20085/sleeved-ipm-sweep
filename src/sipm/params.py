@@ -451,6 +451,12 @@ class Params:
     mech_temperature_cold: float = _f(20.0, "degC", "illustrative",
                                       "Uniform rotor temperature of the '_cold' load cases (the '_hot' cases use "
                                       "mech_temperature); interference is defined at mech_ref_temperature")
+    liftoff_search_tol: float = _f(100.0, "rpm", "illustrative",
+                                   "Lift-off speed of rotors whose sleeve contact is not linear in speed "
+                                   "(sleeved_bridgeless): found with extra MAPDL runs at trial speeds until "
+                                   "the bracket (contact pressure positive everywhere / zero somewhere) is this "
+                                   "narrow; the value is its midpoint. 0 = no search, lift-off NaN "
+                                   "(docs/methods.md, 3.1)")
 
     # ------------------------------------------------------------------------------------
     def __post_init__(self):
@@ -787,6 +793,8 @@ class Params:
                 err.append(str(e))
             if self.overspeed_factor < 1.0:
                 err.append(f"overspeed_factor must be >= 1, got {self.overspeed_factor}")
+            if self.liftoff_search_tol < 0:
+                err.append(f"liftoff_search_tol must be >= 0 rpm (0 = no search), got {self.liftoff_search_tol}")
             for n in ("mech_temperature", "mech_ref_temperature", "mech_temperature_cold"):
                 if not TEMPERATURE_RANGE[0] < getattr(self, n) <= TEMPERATURE_RANGE[1]:
                     err.append(f"{n} must be in ({TEMPERATURE_RANGE[0]:g}, {TEMPERATURE_RANGE[1]:g}] degC, "

@@ -206,6 +206,21 @@ def _sleeve_material(a, mat: int, c: dict, label: str) -> None:
     a(f"MP,DENS,{mat},{_num(c['sleeve_density'] * 1e-12)}")
 
 
+def _sleeve_area_size(model: MechModel) -> float:
+    """A third of the radial thickness of the single-layer sleeve of ``model`` (from its outline)."""
+    rr = np.hypot(model.sleeve.pts[:, 0], model.sleeve.pts[:, 1])
+    return float(rr.max() - rr.min()) / 3
+
+
+def bore_arc_sized(p: Params, model: MechModel) -> bool:
+    """True when the deck sizes the sleeve bore arc (the contact target) explicitly to ``mech_mesh``
+    for a single-layer sleeve: the sleeve is thinner than 3 x ``mech_mesh``, so its area size
+    (thickness / 3) is finer than the lamination's. Layered sleeves size that arc always."""
+    if model.sleeve is None or p.is_layered:
+        return False
+    return _sleeve_area_size(model) < p.mech_mesh
+
+
 def write_deck(p: Params, model: MechModel, path: str | Path, results_file: str = RESULTS_FILE,
                contact_elements: bool = False) -> Path:
     """Write the APDL input deck for one mechanical point and return its path.
@@ -358,17 +373,17 @@ def write_deck(p: Params, model: MechModel, path: str | Path, results_file: str 
         # sleeve contact are meshed alike (a finer target than contact side makes the pressure ripple)
         a(f"LESIZE,{arcs[0]},{_num(h)},,,,1")
     elif model.sleeve is not None:
-        rr = np.hypot(model.sleeve.pts[:, 0], model.sleeve.pts[:, 1])
-        hs = min(h, (rr.max() - rr.min()) / 3)  # at least three quadratic elements through the sleeve
+        hs = min(h, _sleeve_area_size(model))  # at least three quadratic elements through the sleeve
         a("ASEL,S,AREA,,301")
         a(f"AESIZE,ALL,{_num(hs)}")
         a("ALLSEL")
-        if p.is_bridgeless and hs < h:
-            # thin sleeve on the bridgeless rotor: the bore arc (line 30003, the contact target) sized like
-            # the lamination OD, as for a layered sleeve, so that both sides of the sleeve contact are meshed
-            # alike (the finer target of the area size alone made the contact pressure ripple). Written only
-            # when the area size is finer than mech_mesh, so every other deck is unchanged; the
-            # bridge-retained rotor keeps its deck (docs/methods.md, 3).
+        if bore_arc_sized(p, model):
+            # thin sleeve (area size finer than mech_mesh), any rotor: the bore arc (line 30003, the
+            # contact target) sized like the lamination OD, as for a layered sleeve, so that both sides of
+            # the sleeve contact are meshed alike (the finer target of the area size alone made the contact
+            # pressure ripple). Written only when the area size is finer than mech_mesh, so every other
+            # deck, the default bridge-retained one among them (1.5 mm sleeve: equal sizes), is unchanged
+            # (docs/methods.md, 3).
             a(f"LESIZE,30003,{_num(h)},,,,1")
     a("AMESH,ALL")
     # contact -----------------------------------------------------------------------------
@@ -911,7 +926,7 @@ def solve_mech(p: Params, cfg: Config | None = None, workdir: str | Path | None 
 
 
 def solve_mech_cases(p: Params, cfg: Config | None = None, workdir: str | Path | None = None,
-                     model: MechModel | None = None, on_start=None) -> dict:
+                     model: MechModel | None = None, on_start=None, liftoff_search: bool | None = None) -> dict:
     """Solve the load cases of ``p.mech_cases`` and combine them (:func:`sipm.loadcases.combine`).
 
     Each case is its own MAPDL run of the single-case deck (:meth:`Params.for_case`: speed and
@@ -921,7 +936,15 @@ def solve_mech_cases(p: Params, cfg: Config | None = None, workdir: str | Path |
     case's result does not depend on which other cases are requested or on their order (with or
     without friction), and a case that fails to converge cannot spoil the start of another. The
     decks export the per-element sleeve contact pressures for the lift-off speed. A failing case
-    fails the whole point (MapdlError naming the case)."""
+    fails the whole point (MapdlError naming the case).
+
+    Lift-off: the two-point extrapolation of :mod:`sipm.loadcases`, except for a rotor whose
+    contact is not linear in speed (:func:`sipm.loadcases.search_applies`, i.e. sleeved_bridgeless
+    with ``liftoff_search_tol`` > 0), where :func:`sipm.loadcases.liftoff_search` solves extra
+    single-case runs at trial speeds (``<workdir>/liftoff_<label>_<n>``, the deck of the cases at
+    another speed). ``liftoff_search`` True / False forces the search on / off (validation and
+    tests; None = by that rule); forced on, a ``liftoff_search_tol`` of 0 is an error. The trial
+    runs are listed in ``r["_liftoff_trials"]`` (label -> list of dicts; not cached)."""
     from . import loadcases
 
     cfg = cfg or Config()
@@ -931,17 +954,40 @@ def solve_mech_cases(p: Params, cfg: Config | None = None, workdir: str | Path |
     wd = Path(workdir) if workdir else cfg.workdir / "mech_single"
     solved: dict[tuple[float, float], dict] = {}
     results = {}
+    contact = model.sleeve is not None
     for case in loadcases.canonical(p.mech_case_list):
         q = p.for_case(case)
         key = (q.mech_rpm, q.mech_temperature)
         if key not in solved:
             try:
-                solved[key] = _solve_single(q, cfg, wd / case, model, on_start,
-                                            contact_elements=model.sleeve is not None)
+                solved[key] = _solve_single(q, cfg, wd / case, model, on_start, contact_elements=contact)
             except MapdlError as e:
                 raise MapdlError(f"load case {case} ({q.mech_rpm:g} rpm, {q.mech_temperature:g} degC): {e}") from e
         results[case] = solved[key]
-    return loadcases.combine(p, results, wall_s=time.time() - t0)
+    search = loadcases.search_applies(p) if liftoff_search is None else liftoff_search
+    if not (search and contact):
+        return loadcases.combine(p, results, wall_s=time.time() - t0)
+    searched, trials, by_temp = {}, {}, {}
+    for label, temp in (("cold", p.mech_temperature_cold), ("hot", p.mech_temperature)):
+        if temp not in by_temp:   # equal temperatures: one search for both labels
+            n = [0]
+
+            def solve_at(rpm: float, temp=temp, label=label, n=n) -> dict:
+                n[0] += 1
+                q = p.replace(mech_cases="", mech_rpm=rpm, mech_temperature=temp)
+                try:
+                    return _solve_single(q, cfg, wd / f"liftoff_{label}_{n[0]}", model, on_start,
+                                         contact_elements=True)["_contact_elems"]
+                except MapdlError as e:
+                    raise MapdlError(f"lift-off search run at {rpm:.1f} rpm, {temp:g} degC: {e}") from e
+
+            entries = loadcases.liftoff_entries(p, results, temp)
+            rpm, basis, tr = loadcases.liftoff_search(entries, solve_at, p.liftoff_search_tol)
+            by_temp[temp] = ((rpm, basis), tr)
+        searched[label], trials[label] = by_temp[temp]
+    out = loadcases.combine(p, results, wall_s=time.time() - t0, searched=searched)
+    out["_liftoff_trials"] = trials
+    return out
 
 
 def _solve_single(p: Params, cfg: Config, wd: Path, model: MechModel, on_start=None,

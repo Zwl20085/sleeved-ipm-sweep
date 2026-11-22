@@ -301,6 +301,15 @@ report a 2D loss of exactly 0.
 * reports `torque_avg`, `torque_max`, `torque_min`, `torque_ripple` over the last `em_span`
   degrees, as a torque run does, and the sleeve loss.
 
+Only torque runs (`MaxwellSession.solve`, `physics = "em"`) see the conductivity. The
+open-circuit run (`open_circuit`), the no-load field (`no_load_flux_density`) and the AC copper
+loss run (`ac_loss`) model the sleeve non-conducting whatever its conductivity (both ply values
+set to 0, so they use the Maxwell model of the non-conducting sleeve): the first two start from a
+static field, so a conducting sleeve would add the start-up transient of its eddy currents to the
+flux linkage and EMF of the first period, and `ac_loss` would count the sleeve loss as copper
+loss in `SolidLoss`. Their results are therefore those of section 5 of validation.md for any
+sleeve conductivity (an open-circuit run with 1e4 S/m gives the same EMF).
+
 *Net current.* The sleeve is a full ring whose axial current returns through the sleeve at its
 ends. With an ideal (resistance-free) end return the only constraint is zero total current
 through the ring's cross-section. The model holds one pole with odd periodicity, so the sleeve
@@ -395,12 +404,13 @@ The deck is plain APDL, written by Python, run in batch, and post-processed into
    mesh, `mech_mesh` globally, `mech_mesh_fine` on all lines shorter than 3 mm (fillets,
    bridges, rib, lug faces), at least three quadratic elements through the sleeve (a layered
    sleeve: at least two through every layer, section 4.6). Where that makes the sleeve's element
-   size finer than `mech_mesh` on the bridgeless rotor (its default 0.5 mm sleeve), the sleeve bore
-   arc, the target of the sleeve contact, keeps the lamination's size `mech_mesh`, as for a
-   layered sleeve: with the finer target the contact pressure rippled along the interface
-   (validation.md section 2). The bridge-retained rotor's decks are not changed by this rule: at
-   its default 1.5 mm sleeve the two sizes are equal anyway, while a thinner sleeve there (below
-   3 x `mech_mesh`) keeps the finer target, so its published results stay as they are.
+   size finer than `mech_mesh` (a single-layer sleeve thinner than 3 x `mech_mesh`, on either
+   rotor: the bridgeless rotor's default 0.5 mm sleeve, a 1.0 mm bridge-retained sleeve), the
+   sleeve bore arc, the target of the sleeve contact, keeps the lamination's size `mech_mesh`,
+   as for a layered sleeve: with the finer target the contact pressure rippled along the
+   interface (validation.md section 2). At the bridge-retained default (1.5 mm sleeve, 0.5 mm
+   mesh) the two sizes are equal and the deck is unchanged. Cached sweep points this rule
+   changed are solved again (section 5).
 3. **Materials:** linear elastic, small deformation (`NLGEOM,OFF`), isotropic lamination
    and magnets (Table II). The sleeve is cylindrically orthotropic: element axes come from
    a local cylindrical system (`ESYS`), x = radial, y = hoop, z = axial (see section 4). A
@@ -536,7 +546,9 @@ requested case at that temperature is used, whatever its label):
 * fewer than two fully closed cases at different speeds: NaN;
 * no element's pressure falls with speed: `inf`;
 * `mu_sleeve` != 0 or frictional magnets: NaN, the model is not linear;
-* the bridgeless rotor (`sleeved_bridgeless`): NaN, its contact is not linear in speed (below).
+* the bridgeless rotor (`sleeved_bridgeless`): its contact is not linear in speed (below), so the
+  line is not used; the lift-off speed is searched for directly (next paragraph), or NaN with
+  `liftoff_search_tol` = 0.
 
 `liftoff_basis_cold` / `_hot` names the two cases used or the reason for NaN / 0. Two checks of
 the linearity add a flag to it while the value is still reported: a case that is open below
@@ -550,9 +562,42 @@ centrifugal load alone. Validation: validation.md section 11. The linearity hold
 bridge-retained rotor (direct runs confirm the extrapolated speed to about 0.5 %) but not for
 the bridgeless rotor: its loose lamination pieces tilt, the contact at the piece edges beside
 the OD openings is partly open and changes with load, and the pressure there is not even
-monotonic in speed. The extrapolation would give 0 hot (an edge is open at standstill) and an
-overestimate cold, so its lift-off columns are NaN with a note in the basis; use the per-case
-`contact_p_min` and `sleeve_open_fraction` columns for that rotor.
+monotonic in speed. The extrapolation would give an overestimate cold.
+
+**Lift-off by search (bridgeless rotor).** With the same definition, the lowest speed at which a
+contact element's pressure reaches zero, the speed is found directly by extra single-case runs at
+trial speeds (`loadcases.liftoff_search`, called by `mapdl.solve_mech_cases` when
+`loadcases.search_applies`: `sleeved_bridgeless`, frictionless sleeve, bonded magnets,
+`liftoff_search_tol` > 0). Per temperature:
+
+* the slowest case not fully closed: 0 at standstill, NaN otherwise, exactly as on the linear
+  path, no extra run (the hot bridgeless default is open at standstill at edge elements next to
+  the OD openings, so it reports 0 like the linear rule, although those edges close again with
+  speed; validation.md section 11);
+* bracket: the solved speeds are walked upwards; the last of the run with positive pressure in
+  every element from the slowest case is the lower end, the first case with a zero element
+  pressure above it the upper end (none: open above);
+* trial speeds: from the extrapolation through the fastest closed solutions known so far,
+  element by element (quadratic in speed squared through three, linear through two; locally
+  accurate however non-linear the contact is over the whole range): the estimate + 0.45 x the
+  tolerance, and once a zero-pressure speed lies within the tolerance above the estimate, the
+  estimate - 0.45 x the tolerance, which closes the bracket; bisection when the estimate lies
+  outside the bracket or the bracket did not halve over three runs; 1.5 x the fastest closed
+  speed when there is no estimate yet;
+* stop when the bracket is at most `liftoff_search_tol` (default 100 rpm) wide; the value is its
+  midpoint, within half the tolerance of the zero-pressure speed of the model;
+* at most 12 extra runs per temperature (`loadcases.SEARCH_MAX_SOLVES`); a search that does not
+  reach the tolerance within them, or whose trial run fails, gives NaN with the reason.
+
+The pressure, not the contact status, is the criterion: an element whose integration points have
+partly opened still carries pressure on its closed part, and its status opens a few percent below
+the speed at which its pressure reaches zero (validation.md section 11). The basis says that the
+value was found by iteration and names the bracket, the cases and the number of extra runs. Like
+the line, the search assumes one transition from closed to open inside the bracket; an opening
+that closes again between two closed speeds would not be seen. The trial runs use the case deck at
+another speed (folders `liftoff_<label>_<n>`); they add two to a few runs to the point (two for the
+default bridgeless rotor cold) and their contact data are in `r["_liftoff_trials"]` (not cached).
+The bridge-retained rotor keeps the two-point extrapolation: same runs, same values.
 
 ## 4. Composite sleeve model
 
@@ -810,7 +855,12 @@ superposition as for one ring, with the prestress in p0.
 `sipm.sweep.Sweep` resolves every row of a design table to a full, validated parameter set,
 hashes it (with the physics) and caches each finished point as
 `<workdir>/<name>/cache/<hash>.json` (written atomically). Re-running the sweep solves only
-missing points, so an interrupted sweep resumes. Invalid designs are recorded as
+missing points, so an interrupted sweep resumes. A solver change that alters the results of some
+points without a parameter for the hash (`sipm.sweep.point_rules`: the bore-arc sizing of thin
+single-layer sleeves, section 3 item 2; the lift-off search, section 3.1) is recorded as a rule
+name in the cache records of the points it applies to; a cached record of such a point without
+that name was written by earlier code and is solved again under the same hash. Every other
+point keeps its hash, its record and its reuse. Invalid designs are recorded as
 `invalid`, solver errors as `failed` with the error text (MAPDL `*** ERROR ***` blocks,
 AEDT message-manager errors); neither stops the sweep. EM points that share a model are run
 back to back in one AEDT project.
