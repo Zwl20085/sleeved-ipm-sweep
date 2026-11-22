@@ -34,6 +34,7 @@ import pandas as pd
 
 from . import _style as st
 from ._geomfig import GEOMETRY_COLORS, PANEL_HEADINGS, geometry_plot, topology_figure
+from .params import MAX_SLEEVE_LAYERS
 
 if TYPE_CHECKING:  # pragma: no cover
     from matplotlib.axes import Axes
@@ -96,6 +97,11 @@ LABELS = {
     "liftoff_rpm_hot": "Lift-off speed, hot (rpm)",
     "overspeed_factor": "Overspeed factor (-)",
     "mech_temperature_cold": "Rotor temperature, cold cases (°C)",
+    # layered sleeve (sleeve_layers)
+    "tau_sleeve_interface_max": "Max interlaminar radial-hoop shear, sleeve (MPa)",
+    "sleeve_sf_layer": "Governing sleeve layer, Tsai-Wu, 1 = bore (-)",
+    **{f"sh_sleeve_max_L{k}": f"Max hoop stress, sleeve layer {k} (MPa)" for k in range(1, MAX_SLEEVE_LAYERS + 1)},
+    **{f"sleeve_sf_L{k}": f"Tsai-Wu strength ratio, sleeve layer {k} (-)" for k in range(1, MAX_SLEEVE_LAYERS + 1)},
 }
 
 

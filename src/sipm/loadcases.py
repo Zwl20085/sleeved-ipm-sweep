@@ -37,6 +37,7 @@ ENVELOPE = (
     ("sleeve_sf", "min"),
     ("sleeve_open_fraction", "max"),
     ("contact_p_min", "min"),
+    ("tau_sleeve_interface_max", "max"),   # layered sleeves only (absent outputs are skipped)
 )
 WORST = "worst"
 CLOSED_STATUS = 2.0      # CONT,STAT of CONTA172: 0/1 open, 2 sliding, 3 sticking

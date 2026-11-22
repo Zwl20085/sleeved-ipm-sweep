@@ -177,6 +177,78 @@ def test_mech_liftoff_direct(cfg):
     assert below["sleeve_open_fraction"] == 0 and below["contact_p_min"] > 0
 
 
+@need_mapdl
+def test_ring_multilayer_against_closed_form(cfg):
+    """3-layer sleeve (hoop / +/-30 deg / hoop) with interference, winding prestress, 20000 rpm and
+    100 K: every layer's hoop stress, the interface stresses and the contact pressure against the
+    disc + N rings closed form, and the lift-off speed cold and hot (docs/validation.md section 12)."""
+    import numpy as np
+
+    from sipm.validation import multilayer_ring_check
+
+    r = multilayer_ring_check(cfg=cfg, workdir=cfg.workdir / "ring_multilayer")
+    for row in r["rows"]:
+        print(f"[ring 3 layers] {row['quantity']}: FE {row['fe']:.4f} closed form {row['closed_form']:.4f} "
+              f"error {100 * row['rel_error']:+.3f} %")
+        assert abs(row["rel_error"]) < 5e-3
+    for row in r["liftoff"]:
+        print(f"[ring 3 layers lift-off {row['label']}] FE {row['fe']:.1f} rpm, closed form {row['closed_form']:.1f} "
+              f"rpm, error {100 * row['rel_error']:+.4f} % ({row['basis']})")
+        assert abs(row["rel_error"]) < 1e-3
+    fe, s = r["fe"], r["fe"]["_sleeve_nodes"]
+    assert sorted(set(s["layer"].tolist())) == [1, 2, 3]
+    assert fe["sh_sleeve_max"] == max(fe[f"sh_sleeve_max_L{k}"] for k in (1, 2, 3))
+    assert fe["sleeve_sf"] == min(fe[f"sleeve_sf_L{k}"] for k in (1, 2, 3))
+    assert fe["sleeve_sf_layer"] == 2          # the helical layer governs
+    for k in (1, 2, 3):
+        assert np.isclose(s["s_hoop"][s["layer"] == k].max(), fe[f"sh_sleeve_max_L{k}"], rtol=1e-9)
+    # axisymmetric: the interlaminar shear is discretisation noise
+    assert fe["tau_sleeve_interface_max"] < 1e-3 * fe["sh_sleeve_max"]
+
+
+@need_mapdl
+def test_ring_prestress_single_layer(cfg):
+    """Winding prestress on the single-layer sleeve (INISTATE on material 3), no interference, hot,
+    against the N = 1 closed form with hoop eigenstrain."""
+    from sipm import analytic
+    from sipm.mapdl import mech_model_ring, solve_mech
+    from sipm.validation import disc_body, layer_bodies, ring_params
+
+    p = ring_params("thermal", interference=0.0, sleeve_layer_prestress="150", mech_mesh=0.5, mech_mesh_fine=0.5)
+    fe = solve_mech(p, cfg, cfg.workdir / "ring_prestress", model=mech_model_ring(71.1, 1.5))
+    ref = analytic.rings_summary([71.1, 72.6], disc_body(p), layer_bodies(p), p.mech_rpm * 2 * math.pi / 60, 0.0,
+                                 p.mech_delta_t, p.sleeve_layer_prestrain())
+    for name, f, c in (("sleeve max hoop", fe["sh_sleeve_max"], ref["sh_ring_max"]),
+                       ("contact p min", fe["contact_p_min"], ref["p_interface"]),
+                       ("disc max von Mises", fe["svm_lam_max"], ref["svm_disc_max"])):
+        print(f"[ring prestress] {name}: FE {f:.4f} closed form {c:.4f} error {100 * (f - c) / c:+.3f} %")
+        assert abs(f - c) < 5e-3 * abs(c)
+    assert "sleeve_sf_layer" not in fe and "tau_sleeve_interface_max" not in fe   # single-layer columns only
+
+
+@need_mapdl
+def test_mech_point_multilayer(cfg):
+    """The default bridge-retained rotor with a hoop / helical / hoop sleeve and winding prestress
+    solves; the envelope columns are the extremes of the per-layer ones."""
+    from sipm.mapdl import solve_mech
+
+    p = default_params("sleeved_bridged", sleeve_fibre="carbon_sm", sleeve_layers="0:2,20:1,0:1",
+                       sleeve_layer_prestress="50")
+    r = solve_mech(p, cfg, cfg.workdir / "mech_multilayer")
+    hoop = [r[f"sh_sleeve_max_L{k}"] for k in (1, 2, 3)]
+    print(f"[mech 3 layers] svm_lam_max {r['svm_lam_max']:.1f} MPa, sleeve hoop per layer "
+          f"{', '.join(f'{h:.1f}' for h in hoop)} MPa, contact p min {r['contact_p_min']:.3f} MPa, "
+          f"SF {r['sleeve_sf']:.2f} (layer {r['sleeve_sf_layer']}), "
+          f"interlaminar shear {r['tau_sleeve_interface_max']:.3f} MPa, nodes {r['n_nodes']}, "
+          f"wall {r['mech_wall_s']:.1f} s")
+    assert r["sh_sleeve_max"] == max(hoop) and hoop[1] < hoop[0]
+    assert r["sleeve_sf"] == min(r[f"sleeve_sf_L{k}"] for k in (1, 2, 3)) and r["sleeve_sf"] > 1
+    assert r["sleeve_sf_layer"] in (1, 2, 3) and r["sleeve_open_fraction"] == 0
+    assert 0 < r["tau_sleeve_interface_max"] < r["tau_sleeve_max"] + 1e-9
+    s = r["_sleeve_nodes"]
+    assert sorted(set(s["layer"].tolist())) == [1, 2, 3]
+
+
 @pytest.fixture(scope="module")
 def session(cfg):
     from sipm.maxwell import MaxwellSession

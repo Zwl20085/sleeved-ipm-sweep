@@ -256,10 +256,13 @@ The deck is plain APDL, written by Python, run in batch, and post-processed into
    exact for centrifugal load and interference.
 2. **2D plane stress** by default (`plane="strain"` available), PLANE183, free triangular
    mesh, `mech_mesh` globally, `mech_mesh_fine` on all lines shorter than 3 mm (fillets,
-   bridges, rib, lug faces), at least three quadratic elements through the sleeve.
+   bridges, rib, lug faces), at least three quadratic elements through the sleeve (a layered
+   sleeve: at least two through every layer, section 4.6).
 3. **Materials:** linear elastic, small deformation (`NLGEOM,OFF`), isotropic lamination
    and magnets (Table II). The sleeve is cylindrically orthotropic: element axes come from
-   a local cylindrical system (`ESYS`), x = radial, y = hoop, z = axial (see section 4).
+   a local cylindrical system (`ESYS`), x = radial, y = hoop, z = axial (see section 4). A
+   layered sleeve (`sleeve_layers`) is one such material per layer, perfectly bonded
+   (section 4.6).
 4. **Sleeve-lamination contact:** surface-to-surface (CONTA172/TARGE169), augmented
    Lagrange, friction `mu_sleeve` (default frictionless). The **radial interference** is a
    contact offset `CNOF = interference`, ramped over the load step (KEYOPT(9) = 4). The
@@ -284,8 +287,9 @@ The deck is plain APDL, written by Python, run in batch, and post-processed into
      (validation.md section 7).
    No pre-stress, no adhesive stiffness of its own.
 6. **Load:** centrifugal load at `mech_rpm` about the shaft axis, together with the
-   interference and, optionally, a uniform temperature (section 4.3), in one load step. No
-   shaft (the lamination bore is traction free), no electromagnetic forces.
+   interference and, optionally, a uniform temperature (section 4.3) and a winding prestress
+   of the sleeve (`sleeve_layer_prestress`, section 4.6), in one load step. No shaft (the
+   lamination bore is traction free), no electromagnetic forces.
 7. **Outputs** (MPa, nodal von Mises averaged within each body):
    * `svm_lam_max`, the headline lamination stress, is the peak over **named load-carrying
      sections** (`sipm.geometry.locations`). The global peak of these rotors sits at sharp
@@ -319,7 +323,8 @@ The deck is plain APDL, written by Python, run in batch, and post-processed into
      of the lamination peak. Sleeve stresses are nodal averages in the cylindrical system;
      the per-node values (r, theta, radial, hoop, axial, r-theta shear) are written to
      `sipm_sleeve_nodes.txt` and returned to the caller of `solve_mech` as
-     `r["_sleeve_nodes"]` (not cached by the sweep);
+     `r["_sleeve_nodes"]` (not cached by the sweep). For a layered sleeve the averages are
+     taken within each layer and the columns are envelopes over the layers (section 4.6);
    * the sleeve failure indices and safety factor of section 4.4.
 
 ### 3.1 Load cases and lift-off speed
@@ -408,7 +413,8 @@ overestimate cold, so its lift-off columns are NaN with a note in the basis; use
 
 ## 4. Composite sleeve model
 
-The sleeve is one cylindrically orthotropic body (section 3, item 3). Its thirteen constants
+The sleeve is one cylindrically orthotropic body (section 3, item 3), or a stack of bonded
+layers of such bodies (section 4.6). Its thirteen constants
 (nine elastic constants, density, three thermal expansion coefficients) are either entered
 directly, as the paper's Table II gives them (the default, section 4.5), or derived from a
 composite specification by `sipm.composite` (`sleeve_fibre` set). Every preset in
@@ -531,6 +537,130 @@ default keeps the published 1800 kg/m3; the composite spec gives the rule-of-mix
 density. At the default rotor point the two constant sets give the headline and sleeve
 stresses within 1.5 % and the minimum contact pressure within 7 % (validation.md
 section 10).
+
+### 4.6 Layered sleeve and winding prestress
+
+**Layers.** `sleeve_layers` lists the layers from the bore outward as `angle:weight` items,
+e.g. `"0:2,20:1,0:1"`: a balanced +/- winding angle from the hoop direction and a weight; the
+weights are normalised to fractions of `sleeve_thickness`, so a thickness sweep scales every
+layer. All layers share one ply (`sleeve_fibre`, `sleeve_matrix`, `sleeve_vf`,
+`sleeve_micromechanics`, which are required); each layer is `angle_ply(ply, angle)` (section
+4.2), and `sleeve_wind_angle` must be 0. At most 10 layers, each at least 0.05 mm thick (a
+clear error otherwise). `''` (default) is the single-layer sleeve, with the deck and every
+result as before. `sipm composite --fibre carbon_sm --layers 0:2,20:1,0:1` prints the
+constants of every layer and of the stack.
+
+**Deck.** Every layer is its own area (301, 302, ... from the bore) and material (41, 42, ...),
+with the element axes of the local cylindrical system as before. The areas are built on
+shared keypoints and lines, so neighbouring layers share the interface arc and its nodes: the
+layers are perfectly bonded (no slip, no delamination). The area element size is at most half
+the layer thickness and the radial edges of every layer are divided into at least two
+elements, so every layer has at least two quadratic elements through its thickness. The bore
+arc of the first layer, the target of the sleeve contact, gets the element size of the
+lamination (`mech_mesh`), so that both sides of the contact are meshed alike: with the finer
+target that the layer size alone gives, the contact pressure rippled by +/-2.5 % along the
+ring check (validation.md section 12), with matched sizes it is uniform to 2e-5. The contact,
+the boundary conditions and the loads are as for the single sleeve.
+
+**The thirteen sleeve constants of a layered sleeve** hold the membrane (thin-wall)
+homogenisation of the stack (`sipm.composite.layer_stack`): the layers share the in-plane
+strains (hoop, axial, hoop-axial) and carry the same out-of-plane stresses (radial and the
+transverse shears), and the other components are thickness averages. This is the averaging
+of section 4.2 applied once more, to the layers; the expansion coefficients are the free
+strain of the stack and the density the thickness average. These are the constants of the
+homogeneous sleeve that carries the same membrane forces under the same hoop and axial
+strains, which is what sets the interference pressure and the retention. Other choices would
+mislead more: the first layer's constants ignore the others; a thickness average of the
+engineering moduli is not a stiffness of anything (it ignores the Poisson coupling between
+layers whose Poisson ratios differ widely, e.g. nu_hoop_axial of 0.27 and 1.39 in a hoop and
+a +/-20 deg layer); a series average describes stacking along the hoop direction, which a
+sleeve does not have. The deck and the failure evaluation do not use them; they are what the
+sweep cache key and the printouts see. They still pass the parameter validation (their
+compliance is positive definite by construction).
+
+**Stresses at the layer interfaces.** In batch /POST1 (full graphics) a node's result is the
+average over all selected elements attached to it, whatever their material; the `AVRES`
+setting that can stop averaging across material boundaries applies to PowerGraphics only.
+Measured on the 3-layer ring: an interface node with all sleeve elements selected shows a
+hoop stress of 311.3 MPa, the mean of the hoop layer's 445.3 MPa and the helical layer's
+177.2 MPa, i.e. a value that exists in neither layer. The deck therefore sorts and exports
+every layer with only that layer's elements selected: the per-layer results are averages
+within the layer, and the sleeve node file carries a seventh column with the layer number, so
+an interface node appears once per layer with that layer's own stresses. The sleeve columns
+`sh_sleeve_max`, `sr_sleeve_min`, `sr_sleeve_max`, `tau_sleeve_max` and `svm_sleeve_max` keep
+their meaning as extremes over the whole sleeve, formed over the per-layer values. The radial
+stress and the r-theta shear are continuous across a bonded interface (on the ring the radial
+stresses of the two sides agree within 0.05 %); `tau_sleeve_interface_max` is the largest |r-theta shear| over the
+interface nodes, each node's two values averaged, the interlaminar shear that a delamination
+assessment would start from.
+
+**Failure.** Each row of the node file is evaluated with the laminate of its layer
+(section 4.4, including that layer's ply-to-ply thermal mismatch). The failure columns stay
+envelopes over the whole sleeve; in addition each layer gets `sh_sleeve_max_L<i>` (its peak
+hoop stress) and `sleeve_sf_L<i>` (its smallest Tsai-Wu strength ratio), `i` = 1 at the bore,
+and `sleeve_sf_layer` names the layer of `sleeve_sf`. Per-layer columns were chosen over a
+single governing-layer column because the hoop stress of a hoop layer and of a helical layer
+differ by a factor of 2 to 3 and the governing layer can change with speed and temperature
+(on the ring the +/-30 deg layer governs the safety factor although the hoop layers carry the
+higher hoop stress); "layer i from the bore" means the same in every sweep point, at most ten
+layers bound the number of columns, and points with fewer layers have empty cells. With
+`mech_cases` they get the usual `__<case>` suffix; only `tau_sleeve_interface_max` has a
+worst-case envelope column of its own (the envelope of `sleeve_sf` already covers the layers).
+
+**Winding prestress.** `sleeve_layer_prestress` gives each layer (or all layers) a winding
+prestress sigma0 >= 0 in MPa, defined as an eigenstress: the layer's stress-free hoop strain is
+-eps0 with eps0 = sigma0 / E_hoop of that layer, so that the layer held at its fitted radius
+(zero hoop strain) with no radial stress carries the hoop stress sigma0. The eigenstrain is
+applied to all layers at once, in the same load step as interference, speed and temperature,
+and the solution is the relaxed equilibrium state; the outputs include the prestress. In the
+deck this is `INISTATE,SET,DTYP,EPEL` with `INISTATE,SET,CSYS,-2` (element axes, x radial,
+y hoop): an initial elastic hoop strain +eps0 on the layer's elements, whose initial stress
+MAPDL forms with the element's own stiffness, i.e. stress = D (eps - eps_thermal) + D eps0
+= D (eps - eps_thermal - eps*), eps* = -eps0 in hoop. An initial stress (`DTYP,STRE`) of
+D eps0 computed in Python gave the same result to every printed digit on the ring
+(validation.md section 12); the strain form was kept because MAPDL then also forms the
+plane-strain initial stress itself. With no prestress no `INISTATE` command is written. The
+model stays linear in its loads, so the lift-off extrapolation of section 3.1 holds, and
+every load case of `mech_cases` carries the same prestress. Both plies of a +/- layer get the
+same hoop eigenstrain, so it cancels in the ply strains and the ply stresses of section 4.4
+follow from the homogenised stress as before. A single-layer sleeve takes one value.
+
+This is a **simultaneous-eigenstrain model, not the build-up of real winding**. A wound sleeve
+is laid layer by layer: each new layer is wound onto a rotor already compressed by the layers
+beneath, and it compresses them further, relaxing their tension. The deck applies all
+eigenstrains at once to the finished stack. For a helical layer it applies the prestress as a
+hoop eigenstrain of the homogenised layer, while the real tension acts along the fibre. Tension
+loss during winding, cure shrinkage, creep and stress relaxation are not modelled.
+
+**From a winding tension to equivalent prestresses** (`sipm.analytic.sequential_winding`,
+`sipm.validation.winding_prestress`, `sipm winding --tension T`). On the closed-form model
+(the lamination as a solid isotropic disc of radius `r_lam`, the layers as bonded rings) the
+build-up is solved step by step: ring j is added to the disc and the rings below it and
+loaded by a hoop eigenstrain of its own, sized so that its mean hoop stress equals the winding
+stress the moment it is laid; the structure beneath responds elastically (displacements of a
+step counted from the moment ring j is laid) and the steps are summed. With `--sublayers m`
+every layer is laid as m sub-rings in turn. The build-up is not exactly a state of the
+simultaneous model: a ring laid on an already displaced surface amounts to a misfit at its
+bore, not to a uniform hoop eigenstrain. The equivalent prestresses are therefore chosen to
+reproduce the resultant hoop force of every layer, which, because the integral of the hoop
+stress over a ring equals the jump of r sigma_r across it at standstill, is the same as
+reproducing the contact pressure on the lamination and the radial stress at every interface.
+What differs is only the hoop-stress gradient within a layer: at most 0.003 MPa at a 100 MPa
+winding stress for a `0:2,20:1,0:1` sleeve on the default rotor, 0.7 MPa for its single
+1.5 mm sleeve wound as four sub-rings. The solid
+disc is stiffer than the slotted rotor, so the closed form underestimates the relaxation of
+the inner layers; the conversion is a guide, not a substitute for a build-up FE analysis.
+
+**Closed form** (`sipm.analytic.disc_rings`, `rings_summary`, `rings_coupled_pressure`,
+`rings_liftoff_speed`). Each ring keeps the solution of the module docstring,
+u = A_i r^k_i + B_i r^-k_i + C_i r^3 + u_T, plus the particular term of its hoop eigenstrain,
+which is the thermal term with the free strains (alpha_r dT, alpha_t dT) replaced by
+(0, -eps0) (`free_strain_terms`). The 2N + 1 constants follow from a traction-free OD, the
+contact conditions at the disc (sigma_r continuous and u_ring1 - u_disc = interference, or both
+faces free if the pressure would be negative) and continuity of u and sigma_r at every ring
+interface. For N = 1 the linear system is the one of `disc_ring`, entry by entry, and the
+numbers are identical to the last bit (tested). The lift-off speed follows by the same
+superposition as for one ring, with the prestress in p0.
 
 ## 5. Sweep runner and post-processing
 

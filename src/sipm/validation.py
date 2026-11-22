@@ -130,6 +130,110 @@ def ring_check(case: str = "orthotropic", radius: float = 71.1, t_sleeve: float 
                 fe=fe)
 
 
+# ---------------------------------------------------------------------------------------------
+# layered sleeve: disc + N bonded rings
+# ---------------------------------------------------------------------------------------------
+# The 3-layer check: hoop / +/-30 deg helical / hoop (2:1:1, bore outward) carbon_sm/epoxy, winding
+# prestress per layer, 0.1 mm interference, 20000 rpm and 100 K above the fitting temperature.
+MULTILAYER_CASE = dict(sleeve_fibre="carbon_sm", sleeve_layers="0:2,30:1,0:1", sleeve_layer_prestress="100,40,100",
+                       interference=0.1, mech_rpm=20000.0, mech_temperature=120.0)
+
+
+def disc_body(p: Params) -> analytic.Body:
+    """The lamination as a solid isotropic disc (closed form)."""
+    return analytic.isotropic(p.lam_E * 1e3, p.lam_nu, p.lam_density * 1e-12, alpha=p.lam_cte)
+
+
+def layer_bodies(p: Params) -> list[analytic.Body]:
+    """One closed-form ring body per sleeve layer (bore outward), from each layer's constants."""
+    return [analytic.orthotropic(c["sleeve_E_radial"] * 1e3, c["sleeve_E_hoop"] * 1e3, c["sleeve_nu_hoop_radial"],
+                                 c["sleeve_density"] * 1e-12, alpha_r=c["sleeve_cte_radial"],
+                                 alpha_t=c["sleeve_cte_hoop"]) for c in p.sleeve_layer_constants()]
+
+
+def multilayer_ring_params(**kw) -> Params:
+    """Parameters of the 3-layer disc + ring check (:data:`MULTILAYER_CASE`, overridable)."""
+    return default_params("sleeved_bridged", **{**MULTILAYER_CASE, **kw})
+
+
+def multilayer_ring_reference(p: Params, a: float, t: float, temperature: float | None = None,
+                              rpm: float | None = None) -> dict:
+    """Closed form (:func:`sipm.analytic.rings_summary`) of the disc (radius ``a``) + the sleeve layers of
+    ``p`` (total thickness ``t``) with the interference, prestress, speed and temperature of ``p``
+    (or the given ones); adds ``radii``."""
+    temp = p.mech_temperature if temperature is None else temperature
+    w = (p.mech_rpm if rpm is None else rpm) * 2 * math.pi / 60
+    from .params import layer_radii
+
+    radii = layer_radii(a, a + t, p.sleeve_layer_fractions())
+    out = analytic.rings_summary(radii, disc_body(p), layer_bodies(p), w, p.interference,
+                                 dT=temp - p.mech_ref_temperature, prestrain=p.sleeve_layer_prestrain())
+    out["radii"] = radii
+    return out
+
+
+def _layer_node_mean(nodes: dict, layer: int, radius: float, comp: str) -> float:
+    m = (nodes["layer"] == layer) & (np.abs(nodes["r"] - radius) < 1e-4)
+    return float(np.mean(nodes[comp][m])) if m.any() else float("nan")
+
+
+def multilayer_ring_check(radius: float = 71.1, t_sleeve: float = 1.5, mesh: float = 0.5, cfg: Config | None = None,
+                          workdir: str | Path | None = None, liftoff: bool = True, **kw) -> dict:
+    """The layered disc + sleeve (:data:`MULTILAYER_CASE`, overridable by ``kw``) through the MAPDL driver
+    against the closed form: disc peak von Mises, contact pressure, and per layer the max hoop stress,
+    the hoop stress at the layer's bore and OD (node export of that layer) and the radial stress at the
+    layer interfaces. With ``liftoff`` also the lift-off speed from the load cases standstill and rated,
+    cold (= the fitting temperature) and hot, against :func:`sipm.analytic.rings_liftoff_speed`."""
+    cfg = cfg or Config()
+    p = multilayer_ring_params(mech_mesh=mesh, mech_mesh_fine=mesh, sleeve_thickness=t_sleeve, **kw)
+    if liftoff:
+        p = p.replace(mech_cases="standstill_cold,rated_cold,standstill_hot,rated_hot",
+                      mech_temperature_cold=p.mech_ref_temperature)
+    wd = Path(workdir) if workdir else cfg.workdir / "validation_ring_multilayer"
+    fe = solve_mech(p, cfg, wd, model=mech_model_ring(radius, t_sleeve))
+    ref = multilayer_ring_reference(p, radius, t_sleeve)
+    nodes, radii = fe["_sleeve_nodes"], ref["radii"]
+    pairs = [("disc max von Mises", fe["svm_lam_max"], ref["svm_disc_max"]),
+             ("interface pressure (max over contact)", fe["contact_p_max"], ref["p_interface"]),
+             ("interface pressure (min over contact)", fe["contact_p_min"], ref["p_interface"])]
+    for i, lay in enumerate(ref["layers"]):
+        k = i + 1
+        bore, od = _layer_node_mean(nodes, k, radii[i], "s_hoop"), _layer_node_mean(nodes, k, radii[i + 1], "s_hoop")
+        pairs += [(f"layer {k} max hoop stress", fe[f"sh_sleeve_max_L{k}"], lay["sh_max"]),
+                  (f"layer {k} hoop stress at its bore", bore, lay["sh_bore"]),
+                  (f"layer {k} hoop stress at its OD", od, lay["sh_od"])]
+    for i, s in enumerate(ref["sr_interfaces"]):
+        fe_sr = 0.5 * (_layer_node_mean(nodes, i + 1, radii[i + 1], "s_radial")
+                       + _layer_node_mean(nodes, i + 2, radii[i + 1], "s_radial"))
+        pairs.append((f"radial stress at interface {i + 1}/{i + 2}", fe_sr, s))
+    rows = [dict(quantity=q, fe=f, closed_form=c, rel_error=(f - c) / c if c else float("nan")) for q, f, c in pairs]
+    lift = []
+    if liftoff:
+        disc, bodies = disc_body(p), layer_bodies(p)
+        for label, temp in (("cold", p.mech_temperature_cold), ("hot", p.mech_temperature)):
+            w = analytic.rings_liftoff_speed(radii, disc, bodies, p.interference, temp - p.mech_ref_temperature,
+                                             p.sleeve_layer_prestrain())
+            cf = w * 60 / (2 * math.pi)
+            f = fe[f"liftoff_rpm_{label}"]
+            lift.append(dict(label=label, temperature=temp, fe=f, basis=fe[f"liftoff_basis_{label}"], closed_form=cf,
+                             rel_error=(f - cf) / cf))
+    return dict(rows=rows, liftoff=lift, reference=ref, fe=fe, params=p, n_nodes=fe["n_nodes"],
+                wall_s=fe["mech_wall_s"])
+
+
+def winding_prestress(p: Params, tension, sublayers: int = 1) -> dict:
+    """Equivalent ``sleeve_layer_prestress`` of a sleeve wound layer by layer onto the rotor with the
+    winding stress ``tension`` (MPa, one value or one per layer): :func:`sipm.analytic.sequential_winding`
+    on the closed-form model of ``p`` (the lamination as a solid isotropic disc of radius ``r_lam``, the
+    sleeve layers of ``p`` as bonded rings). Adds ``spec`` (the value string for
+    ``sleeve_layer_prestress``) and ``radii``."""
+    radii = p.sleeve_layer_radii()
+    out = analytic.sequential_winding(radii, disc_body(p), layer_bodies(p), tension, sublayers)
+    out["spec"] = ",".join(f"{v:.6g}" for v in out["prestress"])
+    out["radii"] = radii
+    return out
+
+
 def harmonic(theta_deg, y, order=1):
     """Amplitude and phase (deg) of y ~ A cos(order*theta - phase) over a whole period."""
     th = np.radians(np.asarray(theta_deg, float))

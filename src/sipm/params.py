@@ -44,6 +44,11 @@ TEMPERATURE_RANGE = (-273.15, 500.0)      # degC, (exclusive, inclusive]
 # solved and reported, and which breaks ties of the envelope): speed x temperature.
 MECH_CASES = ("standstill_cold", "standstill_hot", "rated_cold", "rated_hot", "overspeed_cold", "overspeed_hot")
 CASE_SEPARATOR = "__"                     # per-case result column: <output>__<case>
+# layered sleeve (sleeve_layers): limits that keep the deck and its mesh sane
+MAX_SLEEVE_LAYERS = 10
+MIN_LAYER_THICKNESS = 0.05                # mm, thinnest layer accepted
+# string fields that a TOML table may give as an array (joined with ',')
+LIST_STRING_FIELDS = ("mech_cases", "sleeve_layers", "sleeve_layer_prestress")
 
 
 def parse_mech_cases(spec: str) -> tuple[str, ...]:
@@ -63,6 +68,69 @@ def parse_mech_cases(spec: str) -> tuple[str, ...]:
     if dup:
         raise ValueError(f"mech_cases: case(s) listed more than once: {dup}")
     return names
+
+
+def _number(text: str, what: str) -> float:
+    try:
+        v = float(text)
+    except ValueError:
+        raise ValueError(f"{what}: {text.strip()!r} is not a number") from None
+    if not math.isfinite(v):
+        raise ValueError(f"{what}: {text.strip()!r} is not finite")
+    return v
+
+
+def parse_sleeve_layers(spec: str) -> tuple[tuple[float, float], ...]:
+    """(angle in deg, weight) of each layer of a ``sleeve_layers`` string, from the bore outward
+    ('' -> ()).
+
+    Comma-separated ``angle:weight`` items, blanks ignored; angle = balanced +/- winding angle
+    from the hoop direction in [0, 90], weight > 0 (normalised later to fractions of the sleeve
+    thickness); at most :data:`MAX_SLEEVE_LAYERS` items."""
+    if not isinstance(spec, str):
+        raise ValueError(f"sleeve_layers must be a string of 'angle:weight' items, got {spec!r}")
+    if not spec.strip():
+        return ()
+    out = []
+    for item in spec.split(","):
+        parts = item.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"sleeve_layers: item {item.strip()!r} is not of the form 'angle:weight'")
+        ang, wt = _number(parts[0], "sleeve_layers angle"), _number(parts[1], "sleeve_layers weight")
+        if not 0.0 <= ang <= 90.0:
+            raise ValueError(f"sleeve_layers: angle {ang:g} deg is outside [0, 90]")
+        if not wt > 0.0:
+            raise ValueError(f"sleeve_layers: weight {wt:g} must be > 0")
+        out.append((ang, wt))
+    if len(out) > MAX_SLEEVE_LAYERS:
+        raise ValueError(f"sleeve_layers: {len(out)} layers, at most {MAX_SLEEVE_LAYERS} are supported")
+    return tuple(out)
+
+
+def parse_layer_prestress(spec: str) -> tuple[float, ...]:
+    """Values (MPa) of a ``sleeve_layer_prestress`` string ('' -> ()); comma-separated, each finite
+    and >= 0."""
+    if not isinstance(spec, str):
+        raise ValueError(f"sleeve_layer_prestress must be a string of comma-separated values, got {spec!r}")
+    if not spec.strip():
+        return ()
+    vals = tuple(_number(s, "sleeve_layer_prestress") for s in spec.split(","))
+    neg = [v for v in vals if v < 0]
+    if neg:
+        raise ValueError(f"sleeve_layer_prestress: values must be >= 0 (winding tension), got {neg}")
+    return vals
+
+
+def layer_radii(r_in: float, r_out: float, fractions) -> tuple[float, ...]:
+    """Radii of the layer boundaries, bore to OD (len(fractions) + 1 values; the last is ``r_out``
+    exactly)."""
+    t = r_out - r_in
+    out, acc = [float(r_in)], 0.0
+    for f in fractions[:-1]:
+        acc += f
+        out.append(r_in + acc * t)
+    out.append(float(r_out))
+    return tuple(out)
 
 
 def _f(default, unit, source, doc, maxwell_name="", **kw):
@@ -275,6 +343,18 @@ class Params:
                                   "Winding angle of a balanced +/- angle-ply sleeve, measured from the hoop "
                                   "direction (0 = hoop winding), in [0, 90]. Non-zero needs sleeve_fibre (the "
                                   "ply cannot be recovered from homogenised constants)")
+    sleeve_layers: str = _f("", "-", "illustrative",
+                            "Layered sleeve: comma-separated 'angle:weight' items from the bore outward, e.g. "
+                            "'0:2,20:1,0:1' (angle = balanced +/- winding angle from hoop in [0, 90] deg, "
+                            "weights normalised to fractions of sleeve_thickness); '' (default) = one homogeneous "
+                            "layer at sleeve_wind_angle. Needs sleeve_fibre (one fibre, matrix and vf for all "
+                            "layers) and sleeve_wind_angle = 0; at most 10 layers, each at least 0.05 mm thick. "
+                            "In the deck each layer is its own area and material, perfectly bonded (shared "
+                            "nodes). The thirteen sleeve constants then hold the membrane homogenisation of the "
+                            "stack (layers share the hoop and axial strain and the radial stress; "
+                            "sipm.composite.layer_stack), i.e. the stiffness and free thermal strain of an "
+                            "equivalent thin homogeneous sleeve: for inspection and the cache key only, the deck "
+                            "and the failure evaluation use each layer's own constants (docs/methods.md, 4.6)")
     # unidirectional ply strengths for the sleeve failure indices (sipm.composite.failure_indices)
     sleeve_Xt: float = _f(2000.0, "MPa", "illustrative",
                           "Sleeve ply strength, fibre-direction tension (default: STRENGTHS['carbon_sm_epoxy'], "
@@ -307,6 +387,18 @@ class Params:
     mech_rpm: float = _f(20000.0, "rpm", "paper", "Speed for the stress analysis")
     interference: float = _f(0.10, "mm", "illustrative",
                              "Radial interference between lamination OD and sleeve bore")
+    sleeve_layer_prestress: str = _f("", "MPa", "illustrative",
+                                     "Winding prestress of the sleeve layers: one value per layer (sleeve_layers "
+                                     "order, from the bore) or one value for all, each >= 0 ('' = none). Value "
+                                     "sigma0 is a hoop eigenstrain: the layer's stress-free hoop strain is "
+                                     "-sigma0/E_hoop of that layer (sigma0 = the hoop stress the layer carries "
+                                     "when held at its fitted radius with no radial stress), applied to all "
+                                     "layers at once before elastic equilibrium (MAPDL INISTATE initial elastic "
+                                     "strain); the outputs are the relaxed state. Acts together with "
+                                     "interference (which may be 0), temperature and speed. A simultaneous-"
+                                     "eigenstrain model, not the layer-by-layer build-up of real winding; "
+                                     "`sipm winding` converts a winding tension into equivalent values "
+                                     "(docs/methods.md, 4.6)")
     mech_temperature: float = _f(20.0, "degC", "illustrative",
                                  "Uniform rotor temperature (lamination, magnets and sleeve) of the stress "
                                  "analysis")
@@ -351,6 +443,10 @@ class Params:
     def _composite_spec_ok(self) -> bool:
         from . import composite
 
+        try:
+            parse_sleeve_layers(self.sleeve_layers)
+        except ValueError:
+            return False
         return (self.sleeve_fibre in composite.FIBRES and self.sleeve_matrix in composite.MATRICES
                 and self.sleeve_micromechanics in composite.MODELS
                 and isinstance(self.sleeve_vf, (int, float)) and 0.0 < self.sleeve_vf < 1.0
@@ -358,24 +454,93 @@ class Params:
 
     def _derive_sleeve(self) -> None:
         """With a composite spec, overwrite the thirteen sleeve constants by the derived ones (an
-        invalid spec is left for :meth:`validate` to report)."""
+        invalid spec is left for :meth:`validate` to report). A layered sleeve gives the membrane
+        homogenisation of its layers (:func:`sipm.composite.layer_stack`)."""
         if self.sleeve_fibre and self._composite_spec_ok():
             from .composite import sleeve_params
 
             for k, v in sleeve_params(self.sleeve_laminate()).items():
                 setattr(self, k, v)
 
+    def _ply(self):
+        from .composite import FIBRES, MATRICES, lamina
+
+        return lamina(FIBRES[self.sleeve_fibre], MATRICES[self.sleeve_matrix], self.sleeve_vf,
+                      self.sleeve_micromechanics)
+
     def sleeve_laminate(self):
         """The sleeve as a :class:`sipm.composite.Laminate` (balanced +/- ``sleeve_wind_angle``
         winding) from the composite spec, or None when the constants are entered directly
-        (``sleeve_fibre`` = '')."""
+        (``sleeve_fibre`` = ''). With ``sleeve_layers`` set it is the
+        :class:`sipm.composite.LayerStack` of the layers (the source of the thirteen constants; it
+        has no plies, the layers are :meth:`sleeve_layer_laminates`)."""
         if not self.sleeve_fibre:
             return None
-        from .composite import FIBRES, MATRICES, angle_ply, lamina
+        from .composite import angle_ply, layer_stack
 
-        ply = lamina(FIBRES[self.sleeve_fibre], MATRICES[self.sleeve_matrix], self.sleeve_vf,
-                     self.sleeve_micromechanics)
-        return angle_ply(ply, self.sleeve_wind_angle)
+        if self.is_layered:
+            return layer_stack(self.sleeve_layer_laminates(), self.sleeve_layer_fractions())
+        return angle_ply(self._ply(), self.sleeve_wind_angle)
+
+    # layers (a single-layer sleeve is one layer) ----------------------------------------------
+    @property
+    def is_layered(self) -> bool:
+        """``sleeve_layers`` is set (each layer its own area and material in the deck)."""
+        return bool(self.sleeve_layers.strip())
+
+    @property
+    def sleeve_layer_count(self) -> int:
+        return len(parse_sleeve_layers(self.sleeve_layers)) or 1
+
+    def sleeve_layer_angles(self) -> tuple[float, ...]:
+        """Winding angle of each layer from the bore outward (one layer: ``sleeve_wind_angle``)."""
+        layers = parse_sleeve_layers(self.sleeve_layers)
+        return tuple(a for a, _ in layers) if layers else (float(self.sleeve_wind_angle),)
+
+    def sleeve_layer_fractions(self) -> tuple[float, ...]:
+        """Thickness fraction of each layer from the bore outward (sum 1)."""
+        layers = parse_sleeve_layers(self.sleeve_layers)
+        if not layers:
+            return (1.0,)
+        tot = sum(w for _, w in layers)
+        return tuple(w / tot for _, w in layers)
+
+    def sleeve_layer_radii(self) -> tuple[float, ...]:
+        """Layer boundary radii of the rotor sleeve, mm (``r_lam`` .. ``r_sleeve_out``)."""
+        return layer_radii(self.r_lam, self.r_sleeve_out, self.sleeve_layer_fractions())
+
+    def sleeve_layer_laminates(self) -> list | None:
+        """One :class:`sipm.composite.Laminate` per layer from the bore outward (a single-layer sleeve:
+        ``[sleeve_laminate()]``), or None when the constants are entered directly."""
+        if not self.sleeve_fibre:
+            return None
+        from .composite import angle_ply
+
+        ply = self._ply()
+        return [angle_ply(ply, a) for a in self.sleeve_layer_angles()]
+
+    def sleeve_layer_constants(self) -> list[dict[str, float]]:
+        """The thirteen sleeve constants (:data:`sipm.composite.SLEEVE_KEYS`) of each layer; with
+        directly entered constants, the one layer's values from the fields."""
+        from .composite import SLEEVE_KEYS, sleeve_params
+
+        lams = self.sleeve_layer_laminates()
+        if lams is None:
+            return [{k: getattr(self, k) for k in SLEEVE_KEYS}]
+        return [sleeve_params(lam) for lam in lams]
+
+    def sleeve_layer_prestress_mpa(self) -> tuple[float, ...]:
+        """Winding prestress of each layer, MPa (zeros when ``sleeve_layer_prestress`` is '')."""
+        vals, n = parse_layer_prestress(self.sleeve_layer_prestress), self.sleeve_layer_count
+        if not vals:
+            return (0.0,) * n
+        return vals * n if len(vals) == 1 else vals
+
+    def sleeve_layer_prestrain(self) -> tuple[float, ...]:
+        """Hoop eigenstrain magnitude of each layer, eps0 = sigma0 / E_hoop (the layer's stress-free
+        hoop strain is -eps0)."""
+        return tuple(s / (c["sleeve_E_hoop"] * 1e3)
+                     for s, c in zip(self.sleeve_layer_prestress_mpa(), self.sleeve_layer_constants()))
 
     def sleeve_strength(self):
         """The sleeve ply strengths as a :class:`sipm.composite.Strength` (St = S)."""
@@ -553,6 +718,33 @@ class Params:
             elif self.sleeve_wind_angle != 0:
                 err.append("sleeve_wind_angle != 0 needs a composite spec (sleeve_fibre): the ply cannot be "
                            "recovered from homogenised constants")
+            try:
+                layers = parse_sleeve_layers(self.sleeve_layers)
+            except ValueError as e:
+                err.append(str(e))
+                layers = None
+            if layers:
+                if not self.sleeve_fibre:
+                    err.append("sleeve_layers needs a composite spec (sleeve_fibre): the layer constants are "
+                               "derived from fibre, matrix and vf")
+                if self.sleeve_wind_angle != 0:
+                    err.append("with sleeve_layers set, sleeve_wind_angle must be 0 (each layer's angle is given "
+                               f"in sleeve_layers), got {self.sleeve_wind_angle}")
+                tot = sum(w for _, w in layers)
+                thin = min(w / tot for _, w in layers) * self.sleeve_thickness
+                if thin < MIN_LAYER_THICKNESS:
+                    err.append(f"sleeve_layers: the thinnest layer is {thin:.4g} mm, below the {MIN_LAYER_THICKNESS} "
+                               "mm minimum (fewer layers, other weights or a thicker sleeve)")
+            try:
+                pre = parse_layer_prestress(self.sleeve_layer_prestress)
+            except ValueError as e:
+                err.append(str(e))
+                pre = ()
+            if pre and layers is not None:
+                n = len(layers) or 1
+                if len(pre) not in (1, n):
+                    err.append(f"sleeve_layer_prestress: {len(pre)} values for {n} sleeve layer(s); give one value "
+                               "per layer or one for all")
             if not 0.0 < self.sleeve_vf < 1.0:
                 err.append(f"sleeve_vf must be in (0, 1), got {self.sleeve_vf}")
             if not 0.0 <= self.sleeve_wind_angle <= 90.0:
@@ -634,8 +826,8 @@ def coerce(name: str, value: Any) -> Any:
         return int(fv)
     if isinstance(default, float):
         return float(value)
-    if name == "mech_cases" and isinstance(value, (list, tuple)):
-        return ",".join(str(v) for v in value)   # TOML [base] may give the cases as an array
+    if name in LIST_STRING_FIELDS and isinstance(value, (list, tuple)):
+        return ",".join(str(v) for v in value)   # TOML may give the cases / layers / prestresses as an array
     return str(value)
 
 

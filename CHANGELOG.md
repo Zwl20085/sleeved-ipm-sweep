@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Layered sleeve, winding prestress, disc + N rings closed form
+
+* **Layered sleeve.** New parameter `sleeve_layers` (default '' = the single-layer sleeve, deck
+  and results unchanged): `angle:weight` items from the bore outward, e.g. `"0:2,20:1,0:1"`,
+  weights normalised to fractions of `sleeve_thickness`; needs a composite spec
+  (`sleeve_fibre`, one ply for all layers) and `sleeve_wind_angle = 0`; at most 10 layers of at
+  least 0.05 mm. In the deck every layer is its own area and material on shared lines (perfect
+  bond), with at least two quadratic elements through each layer and the contact target meshed
+  like the lamination. The thirteen sleeve constants then hold the membrane homogenisation of
+  the stack (`sipm.composite.layer_stack`, `LayerStack`), for inspection and the cache key.
+* **Per-layer post-processing.** Stresses are sorted and exported layer by layer, because
+  MAPDL averages nodal results across material boundaries (an interface node showed the mean of
+  the two layers' hoop stresses, 311 MPa between 445 and 177 MPa); the sleeve node file gets a
+  seventh column `layer` (`parse_sleeve_nodes` returns it). Every node is evaluated for failure
+  with the laminate of its layer. The sleeve columns keep their meaning as extremes over the
+  whole sleeve; new columns for layered sleeves only: `sh_sleeve_max_L<i>`, `sleeve_sf_L<i>`,
+  `sleeve_sf_layer`, `tau_sleeve_interface_max` (interlaminar r-theta shear; also as a
+  worst-case envelope over load cases). Plot labels for them.
+* **Winding prestress.** New parameter `sleeve_layer_prestress` (MPa, one value per layer or one
+  for all, default ''): a hoop eigenstrain eps0 = sigma0 / E_hoop of each layer applied to all
+  layers at once (MAPDL `INISTATE` initial elastic strain in the element axes), together with
+  interference (which may be 0), speed, temperature and every load case of `mech_cases`; the
+  outputs are the relaxed state. A simultaneous-eigenstrain model, not the layer-by-layer
+  build-up. `sipm winding --tension T` (`sipm.analytic.sequential_winding`,
+  `sipm.validation.winding_prestress`) converts a winding stress laid layer by layer onto the
+  closed-form model into equivalent per-layer values that reproduce every layer's hoop force and
+  the interface pressures of the build-up.
+* **Closed form for N rings.** `sipm.analytic.disc_rings` (`RingStack`), `rings_summary`,
+  `rings_coupled_pressure`, `rings_liftoff_speed`, `free_strain_terms`, `hoop_modulus`: disc +
+  N bonded orthotropic rings with per-ring thermal strain and hoop eigenstrain; N = 1 is
+  bit-identical to `disc_ring`, whose API and numbers are unchanged.
+* **Validation** (docs/validation.md section 12): 3-layer ring (hoop / +/-30 deg / hoop,
+  interference, prestress, 20000 rpm, +100 K) against the closed form within 0.15 % for every
+  layer, the interfaces and the contact pressure, lift-off speed within 3e-6, `sipm validate
+  ring-multilayer`; single-layer prestress on the ring within 0.12 %; rotor study of a hoop,
+  a hoop/helical/hoop and a prestressed hoop sleeve. `sipm composite --layers` prints every
+  layer's constants; `examples/configs/mech_multilayer_sleeve.toml`. `sipm deck/params --set`
+  keep string fields strings. New point keys only when a new parameter leaves its default.
+
 ### Load cases as outputs and the lift-off speed
 
 * **Load-case set.** New parameters `mech_cases` (default '' = the single case `mech_rpm` at

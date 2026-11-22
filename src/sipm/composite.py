@@ -5,7 +5,9 @@ Pure numerics (numpy only). The chain is
     Fibre + Matrix + vf  --lamina()-->  Lamina  --angle_ply()-->  Laminate  --sleeve_params()-->  dict
 
 and ``sleeve_params`` emits the ``Params`` sleeve fields (``sleeve_E_hoop`` ... ``sleeve_density``) plus
-``sleeve_cte_hoop``, ``sleeve_cte_radial`` and ``sleeve_cte_axial``.
+``sleeve_cte_hoop``, ``sleeve_cte_radial`` and ``sleeve_cte_axial``. A layered sleeve is a list of
+``Laminate`` objects; ``layer_stack()`` gives their membrane homogenisation (``LayerStack``), the source
+of the ``Params`` constants of a layered sleeve.
 
 Units: moduli in GPa, strengths and stresses in MPa, density in kg/m3, CTE in 1/K, angles in degrees.
 
@@ -44,8 +46,8 @@ from dataclasses import dataclass
 import numpy as np
 
 __all__ = [
-    "Fibre", "Matrix", "Strength", "Lamina", "Laminate",
-    "lamina", "angle_ply", "sleeve_params", "failure_indices", "ply_failure", "sleeve_failure",
+    "Fibre", "Matrix", "Strength", "Lamina", "Laminate", "LayerStack",
+    "lamina", "angle_ply", "layer_stack", "sleeve_params", "failure_indices", "ply_failure", "sleeve_failure",
     "FIBRES", "MATRICES", "STRENGTHS", "MODELS", "SLEEVE_KEYS", "CRITERIA",
 ]
 
@@ -313,7 +315,51 @@ def _mixed(C: np.ndarray, beta: np.ndarray):
     return H, g
 
 
-class Laminate:
+def _invert_mixed(Hb: np.ndarray, gb: np.ndarray):
+    """Invert an averaged mixed law [sig_I; eps_O] = Hb [eps_I; sig_O] + gb dT back to
+    sigma = C (eps - alpha dT). Returns (C, alpha) with C symmetrised, in the unit of Hb."""
+    hii, hio, hoi, hoo = Hb[:3, :3], Hb[:3, 3:], Hb[3:, :3], Hb[3:, 3:]
+    hoo_inv = np.linalg.inv(hoo)
+    C = np.zeros((6, 6))
+    C[np.ix_(_I, _I)] = hii - hio @ hoo_inv @ hoi
+    C[np.ix_(_I, _O)] = hio @ hoo_inv
+    C[np.ix_(_O, _I)] = -hoo_inv @ hoi
+    C[np.ix_(_O, _O)] = hoo_inv
+    C = 0.5 * (C + C.T)
+    # free thermal strain: zero averaged in-plane stress and zero (common) out-of-plane stress
+    eps_I = -np.linalg.solve(hii, gb[:3])
+    eps_O = hoi @ eps_I + gb[3:]
+    alpha = np.zeros(6)
+    alpha[_I], alpha[_O] = eps_I, eps_O
+    return C, alpha
+
+
+class _CylOrthotropic:
+    """Engineering constants (cylinder axes) of an object with a compliance ``S`` [1/GPa] in cylinder
+    Voigt order (hoop, axial, radial, axial-radial, hoop-radial, hoop-axial) and a CTE vector ``alpha``,
+    with the module's Poisson convention ``nu_ab = -eps_b/eps_a`` under stress along a."""
+
+    S: np.ndarray
+    alpha: np.ndarray
+
+    def _nu(self, a: int, b: int) -> float:
+        return -self.S[a, b] / self.S[a, a]
+
+    E_hoop = property(lambda self: 1.0 / self.S[0, 0])
+    E_axial = property(lambda self: 1.0 / self.S[1, 1])
+    E_radial = property(lambda self: 1.0 / self.S[2, 2])
+    nu_hoop_axial = property(lambda self: self._nu(0, 1))
+    nu_hoop_radial = property(lambda self: self._nu(0, 2))
+    nu_radial_axial = property(lambda self: self._nu(2, 1))
+    G_radial_axial = property(lambda self: 1.0 / self.S[3, 3])
+    G_hoop_radial = property(lambda self: 1.0 / self.S[4, 4])
+    G_hoop_axial = property(lambda self: 1.0 / self.S[5, 5])
+    cte_hoop = property(lambda self: float(self.alpha[0]))
+    cte_axial = property(lambda self: float(self.alpha[1]))
+    cte_radial = property(lambda self: float(self.alpha[2]))
+
+
+class Laminate(_CylOrthotropic):
     """Homogenised balanced +/-theta winding (equal ply thicknesses) in cylinder axes.
 
     Built by :func:`angle_ply`. Attributes: ``ply`` (the :class:`Lamina`), ``angle_deg``, ``C`` and ``S``
@@ -339,19 +385,7 @@ class Laminate:
             gs.append(g)
         Hb, gb = 0.5 * (Hs[0] + Hs[1]), 0.5 * (gs[0] + gs[1])
         # invert the averaged mixed law back to sigma = C (eps - alpha dT)
-        hii, hio, hoi, hoo = Hb[:3, :3], Hb[:3, 3:], Hb[3:, :3], Hb[3:, 3:]
-        hoo_inv = np.linalg.inv(hoo)
-        C = np.zeros((6, 6))
-        C[np.ix_(_I, _I)] = hii - hio @ hoo_inv @ hoi
-        C[np.ix_(_I, _O)] = hio @ hoo_inv
-        C[np.ix_(_O, _I)] = -hoo_inv @ hoi
-        C[np.ix_(_O, _O)] = hoo_inv
-        C = 0.5 * (C + C.T)
-        # free thermal strain: zero averaged in-plane stress and zero (common) out-of-plane stress
-        eps_I = -np.linalg.solve(hii, gb[:3])
-        eps_O = hoi @ eps_I + gb[3:]
-        alpha = np.zeros(6)
-        alpha[_I], alpha[_O] = eps_I, eps_O
+        C, alpha = _invert_mixed(Hb, gb)
         S = np.linalg.inv(C)
         self._S_mpa = 0.5 * (S + S.T)
         self.C = C / 1e3
@@ -360,22 +394,7 @@ class Laminate:
         self.density = ply.density
         _require_spd(self.S, f"angle_ply({self.angle_deg:g} deg)")
 
-    # engineering constants (cylinder axes) -----------------------------------------------------------
-    def _nu(self, a: int, b: int) -> float:
-        return -self.S[a, b] / self.S[a, a]
-
-    E_hoop = property(lambda self: 1.0 / self.S[0, 0])
-    E_axial = property(lambda self: 1.0 / self.S[1, 1])
-    E_radial = property(lambda self: 1.0 / self.S[2, 2])
-    nu_hoop_axial = property(lambda self: self._nu(0, 1))
-    nu_hoop_radial = property(lambda self: self._nu(0, 2))
-    nu_radial_axial = property(lambda self: self._nu(2, 1))
-    G_radial_axial = property(lambda self: 1.0 / self.S[3, 3])
-    G_hoop_radial = property(lambda self: 1.0 / self.S[4, 4])
-    G_hoop_axial = property(lambda self: 1.0 / self.S[5, 5])
-    cte_hoop = property(lambda self: float(self.alpha[0]))
-    cte_axial = property(lambda self: float(self.alpha[1]))
-    cte_radial = property(lambda self: float(self.alpha[2]))
+    # engineering constants (cylinder axes): inherited from _CylOrthotropic
 
     def ply_stresses(self, sig, delta_T=0.0):
         """Stresses in the +theta and -theta plies, in each ply's material axes.
@@ -433,8 +452,62 @@ def angle_ply(lam: Lamina, angle_deg: float) -> Laminate:
     return Laminate(lam, angle_deg)
 
 
-def sleeve_params(x: Lamina | Laminate) -> dict[str, float]:
-    """``Params`` sleeve fields from a winding; a bare :class:`Lamina` is taken as a pure hoop winding.
+class LayerStack(_CylOrthotropic):
+    """Membrane (thin-wall) homogenisation of a stack of perfectly bonded sleeve layers.
+
+    Built by :func:`layer_stack`. ``layers`` are :class:`Laminate` objects (each a balanced +/- angle
+    winding, orthotropic in cylinder axes) stacked through the radius with thickness ``fractions``
+    (normalised to sum 1). The layers share the in-plane strains (hoop, axial, hoop-axial) and carry
+    the same out-of-plane stresses (radial and the two transverse shears); the other components are
+    thickness averages. This is the same layered-medium average :func:`angle_ply` applies to the two
+    plies of a winding (Sun & Li 1988), applied once more to the layers. It is exact for a flat
+    laminate and, for a cylinder, neglects the variation of the hoop strain u/r through the
+    thickness, i.e. it is the description of a sleeve whose thickness is small against its radius.
+    The CTE is the free strain at zero homogenised stress and the density the thickness average.
+
+    Attributes as :class:`Laminate` (``C``, ``S``, ``alpha``, ``density`` and the engineering constants),
+    but there are no plies: the failure evaluation needs the individual ``layers``.
+    """
+
+    def __init__(self, layers, fractions):
+        layers, w = list(layers), np.asarray(fractions, dtype=float)
+        if not layers or len(layers) != len(w):
+            raise ValueError("layer_stack: need one fraction per layer")
+        if not all(isinstance(lay, Laminate) for lay in layers):
+            raise TypeError("layer_stack: every layer must be a Laminate")
+        if not (np.all(np.isfinite(w)) and np.all(w > 0)):
+            raise ValueError("layer_stack: fractions must be finite and > 0")
+        w = w / w.sum()
+        self.layers, self.fractions = layers, tuple(float(x) for x in w)
+        Hb, gb = np.zeros((6, 6)), np.zeros(6)
+        for lay, wi in zip(layers, w):
+            C = lay.C * 1e3   # MPa
+            H, g = _mixed(C, C @ lay.alpha)
+            Hb += wi * H
+            gb += wi * g
+        C, alpha = _invert_mixed(Hb, gb)
+        S = np.linalg.inv(C)
+        S = 0.5 * (S + S.T)
+        self.C = C / 1e3
+        self.S = S * 1e3
+        self.alpha = alpha
+        self.density = float(sum(wi * lay.density for lay, wi in zip(layers, w)))
+        _require_spd(self.S, "layer_stack")
+
+    def __repr__(self) -> str:
+        spec = ", ".join(f"+/-{lay.angle_deg:g}:{f:.3g}" for lay, f in zip(self.layers, self.fractions))
+        return f"LayerStack({spec}; E_hoop={self.E_hoop:.4g}, E_axial={self.E_axial:.4g} GPa)"
+
+
+def layer_stack(layers, fractions) -> LayerStack:
+    """Membrane homogenisation of bonded sleeve layers (:class:`LayerStack`); ``layers`` from the bore
+    outward, ``fractions`` their thickness shares (normalised)."""
+    return LayerStack(layers, fractions)
+
+
+def sleeve_params(x: Lamina | Laminate | LayerStack) -> dict[str, float]:
+    """``Params`` sleeve fields from a winding; a bare :class:`Lamina` is taken as a pure hoop winding,
+    a :class:`LayerStack` gives the membrane homogenisation of a layered sleeve.
 
     Keys: :data:`SLEEVE_KEYS` (GPa, -, kg/m3, 1/K). ``sleeve_nu_hoop_radial = -eps_r/eps_hoop`` under hoop
     stress, ``sleeve_nu_hoop_axial = -eps_axial/eps_hoop`` under hoop stress and
@@ -444,8 +517,8 @@ def sleeve_params(x: Lamina | Laminate) -> dict[str, float]:
     """
     if isinstance(x, Lamina):
         x = angle_ply(x, 0.0)
-    if not isinstance(x, Laminate):
-        raise TypeError("sleeve_params needs a Lamina or a Laminate")
+    if not isinstance(x, (Laminate, LayerStack)):
+        raise TypeError("sleeve_params needs a Lamina, a Laminate or a LayerStack")
     return {
         "sleeve_E_hoop": float(x.E_hoop),
         "sleeve_E_radial": float(x.E_radial),
@@ -575,6 +648,9 @@ def sleeve_failure(sig_cyl, strength: Strength, laminate: Laminate | None = None
     stresses are the homogenised ones. Then :func:`ply_failure`. Cure residual stresses are not included.
     """
     sig = np.asarray(sig_cyl, dtype=float)
+    if laminate is not None and not isinstance(laminate, Laminate):
+        raise TypeError("sleeve_failure needs the Laminate of one winding (a LayerStack has no plies: "
+                        "evaluate each layer with its own Laminate)")
     plies = [sig] if laminate is None else list(laminate.ply_stresses(sig, delta_T))
     return ply_failure(plies, strength, f12_star)
 
