@@ -83,14 +83,16 @@ RULE_LIFTOFF_SEARCH = "liftoff-search"   # lift-off found by iteration (sipm.loa
 def point_rules(p: Params, physics: str) -> tuple[str, ...]:
     """The rules of :data:`RULE_BORE_ARC` / :data:`RULE_LIFTOFF_SEARCH` that apply to the point
     (``()`` for most points: every EM point, every mech point with a sleeve at least 3 x
-    ``mech_mesh`` thick or a layered sleeve, and no lift-off search)."""
+    ``mech_mesh`` thick or a layered sleeve, and no lift-off search). From the parameters alone:
+    no geometry is built, so it is cheap and cannot raise for a point whose model would fail (that
+    point fails in its own run, as before)."""
     if physics != "mech":
         return ()
     from .loadcases import search_applies
-    from .mapdl import bore_arc_sized, mech_model_from_rotor
+    from .mapdl import bore_arc_rule
 
     rules = []
-    if bore_arc_sized(p, mech_model_from_rotor(build_rotor(p))):
+    if bore_arc_rule(p):
         rules.append(RULE_BORE_ARC)
     if p.mech_cases and search_applies(p):
         rules.append(RULE_LIFTOFF_SEARCH)

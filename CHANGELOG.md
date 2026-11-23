@@ -8,7 +8,9 @@
   than 3 x `mech_mesh` (the bridgeless rotor's default 0.5 mm sleeve, a 1.0 mm bridge-retained
   sleeve, or the 1.5 mm default at a 0.8 mm mesh) the sleeve area size (thickness / 3) made the
   bore arc, the target of the sleeve contact, finer than the lamination OD; it is now sized
-  `mech_mesh`, as for a layered sleeve, on both rotors (only when the area size is finer). The
+  `mech_mesh`, as for a layered sleeve, on both rotors (only when the area size is finer; a sleeve
+  exactly 3 x `mech_mesh` thick counts as equal within a relative 1e-9, so rounding of the
+  thickness, e.g. 2.1 mm read as 2.0999999999999943 mm, does not decide). The
   bridgeless default deck changes by that one line (pinned hash updated); headline, global and
   magnet peaks move by < 0.01 MPa, sleeve hoop 236.6 to 236.5 MPa, lips by up to 0.4 MPa,
   `tau_sleeve_max` 6.0 to 3.8 MPa (docs/validation.md sections 2, 3, 11). The default
@@ -26,7 +28,9 @@
   (`results()` shows it as `pending` until then). Keys are unchanged for every point (pinned
   default keys and the keys of `examples/data/sample_mech_results.csv`), and points no rule
   applies to (every EM point, the default bridge-retained mech point, sleeves at least
-  3 x `mech_mesh` thick, layered sleeves) keep their records and reuse.
+  3 x `mech_mesh` thick, layered sleeves) keep their records and reuse. The rules are decided
+  from the parameters alone (no geometry is built for a cached point). A failure written under the
+  rules is kept like any failure (`retry_failed` re-runs it).
 * **Bridgeless lift-off speed by search.** `liftoff_rpm_cold` / `_hot` of `sleeved_bridgeless`
   were NaN (contact not linear in speed). They are now found directly with the definition of the
   line (lowest speed at which an element's contact pressure reaches zero; open at standstill = 0):

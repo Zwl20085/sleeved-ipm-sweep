@@ -327,6 +327,7 @@ def liftoff_search(entries: Sequence[tuple[str, float, Mapping[str, np.ndarray]]
     def trial(s: float) -> bool:
         trying[0] = s
         el = solve(s)
+        trying[0] = math.nan   # the run itself succeeded; a later error is not its failure
         ok = pressure_closed(el)
         pres, st = np.asarray(el["pres"], float), np.asarray(el["status"], float)
         trials.append(dict(rpm=s, closed=ok, p_min=float(pres.min()) if len(pres) else math.nan,
@@ -374,7 +375,9 @@ def liftoff_search(entries: Sequence[tuple[str, float, Mapping[str, np.ndarray]]
                     s = min(est + 0.45 * tol, hi - 0.05 * tol)
             if not trial(s):
                 hi = s if hi is None else min(hi, s)
-    except Exception as e:   # a failed trial run: no value, the point itself stands
+    except Exception as e:   # a failed trial run (or an inconsistent one): no value, the point itself stands
+        if math.isnan(trying[0]):
+            return stopped(f"{type(e).__name__}: {e}")
         return stopped(f"the run at {trying[0]:.1f} rpm failed ({type(e).__name__}: {e})")
     lo = closed[-1][0]
     basis = (f"found by iteration: pressure positive at {lo:.1f} rpm, zero at {hi:.1f} rpm, from the cases "

@@ -180,6 +180,23 @@ def test_bore_arc_rule_adds_one_line_only(tmp_path):
     assert not bore_arc_sized(q, mech_model_from_rotor(build_rotor(q)))
 
 
+@pytest.mark.parametrize("topo", ["sleeved_bridged", "sleeved_bridgeless"])
+@pytest.mark.parametrize("t", [0.9, 1.05, 1.2, 1.5, 1.8, 2.1])
+def test_bore_arc_rule_at_exactly_three_elements(tmp_path, topo, t):
+    """A sleeve exactly 3 x mech_mesh thick is not thinner: no LESIZE line, whatever the rounding of
+    the thickness taken from the radii (2.1 mm comes out as 2.0999999999999943, 1.8 mm with the
+    0.6 mm mesh fired the rule before the margin); the parameter-only rule of the sweep agrees with
+    the deck, also just below and above the boundary."""
+    from sipm.mapdl import bore_arc_rule, bore_arc_sized
+
+    for mesh, sized in ((t / 3, False), (t / 3 * 1.001, True), (t / 3 * 0.999, False)):
+        p = default_params(topo, sleeve_thickness=t, mech_mesh=mesh, mech_mesh_fine=min(0.15, mesh))
+        model = mech_model_from_rotor(build_rotor(p))
+        assert bore_arc_sized(p, model) is sized and bore_arc_rule(p) is sized
+        lines = _deck_text(tmp_path, topo, p).splitlines()
+        assert any(ln.startswith("LESIZE,30003") for ln in lines) is sized
+
+
 @pytest.mark.parametrize("topo", ["sleeved_bridged", "sleeved_bridgeless", "ring"])
 def test_deck_contact_element_export(tmp_path, topo):
     p = default_params("sleeved_bridged" if topo == "ring" else topo)
@@ -550,6 +567,15 @@ def test_liftoff_search_bounded_and_failures():
 
     rpm, basis, trials = lc.liftoff_search(Contact(d=QUARTIC).cases(), boom, 100.0)
     assert math.isnan(rpm) and "failed (RuntimeError: no convergence)" in basis and trials == []
+    # a trial run that succeeds but cannot be used (another contact mesh) is not reported as a failed run
+    def other_mesh(s):
+        el = never.elems(s)
+        el["elem"] = el["elem"] + 1000
+        return el
+
+    rpm, basis, trials = lc.liftoff_search(never.cases(speeds), other_mesh, 100.0)
+    assert math.isnan(rpm) and "different contact elements" in basis and "failed" not in basis
+    assert len(trials) == 1 and trials[0]["closed"] and "run at" not in basis
 
 
 def test_search_applies():
@@ -700,6 +726,53 @@ def test_stale_cache_records_are_resolved(tmp_path):
     assert s3.n == 1 and list(df["status"]) == ["ok", "ok"]        # only the thin sleeve was re-solved
     assert [p[3] for p in sw.plan()] == [p[3] for p in plan]       # under the same keys
     assert json.loads(thin.read_text())["rules"] == ["bore-arc-mesh"]
+
+
+class FailingSolver(CountingSolver):
+    def __call__(self, p, wd):
+        self.n += 1
+        raise RuntimeError("no convergence")
+
+
+def test_failed_records_and_rules(tmp_path):
+    """A failure written under the rule is kept like any failure (re-run only with retry_failed);
+    a failure written by earlier code (no rule in the record) is solved again once."""
+    cfg = Config(workdir=tmp_path, min_free_ram_gb=0)
+    sw = Sweep("fail", "mech", [{"sleeve_thickness": 1.0}], topology="sleeved_bridged", cfg=cfg)
+    f = FailingSolver()
+    df = sw.run(solver=f, progress=None)
+    assert f.n == 1 and list(df["status"]) == ["failed"]
+    rec_path = sw._cache_path(sw.plan()[0][3])
+    assert json.loads(rec_path.read_text())["rules"] == ["bore-arc-mesh"]
+    f2 = FailingSolver()
+    assert list(sw.run(solver=f2, progress=None)["status"]) == ["failed"] and f2.n == 0   # not endlessly re-solved
+    rec = json.loads(rec_path.read_text())
+    rec.pop("rules")
+    rec_path.write_text(json.dumps(rec))
+    s = CountingSolver()
+    assert list(sw.run(solver=s, progress=None)["status"]) == ["ok"] and s.n == 1
+    f3 = FailingSolver()
+    sw.run(solver=f3, progress=None, retry_failed=True)
+    assert f3.n == 0                                               # ok and current: kept
+
+
+def test_point_rules_build_no_geometry(monkeypatch):
+    """point_rules runs for every cached point on every run and results(): parameters only, so a point
+    whose model would raise (it fails in its own run) cannot stop the sweep there."""
+    import sipm.geometry
+    import sipm.mapdl
+    import sipm.sweep as sweep
+
+    def boom(*a, **k):
+        raise AssertionError("geometry built")
+
+    for mod, name in ((sweep, "build_rotor"), (sipm.geometry, "build_rotor"), (sipm.mapdl, "build_rotor"),
+                      (sipm.mapdl, "mech_model_from_rotor")):
+        if hasattr(mod, name):
+            monkeypatch.setattr(mod, name, boom)
+    assert sweep.point_rules(default_params("sleeved_bridged", sleeve_thickness=1.0), "mech") == (sweep.RULE_BORE_ARC,)
+    assert sweep.point_rules(default_params("sleeved_bridgeless", mech_cases=ALL), "mech") == (
+        sweep.RULE_BORE_ARC, sweep.RULE_LIFTOFF_SEARCH)
 
 
 # ---- closed-form lift-off -------------------------------------------------------------------

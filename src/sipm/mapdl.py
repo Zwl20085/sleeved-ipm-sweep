@@ -206,19 +206,43 @@ def _sleeve_material(a, mat: int, c: dict, label: str) -> None:
     a(f"MP,DENS,{mat},{_num(c['sleeve_density'] * 1e-12)}")
 
 
-def _sleeve_area_size(model: MechModel) -> float:
-    """A third of the radial thickness of the single-layer sleeve of ``model`` (from its outline)."""
+def _sleeve_thickness(model: MechModel) -> float:
+    """Radial thickness of the single-layer sleeve of ``model`` (from its outline)."""
     rr = np.hypot(model.sleeve.pts[:, 0], model.sleeve.pts[:, 1])
-    return float(rr.max() - rr.min()) / 3
+    return float(rr.max() - rr.min())
+
+
+def _sleeve_area_size(model: MechModel) -> float:
+    """A third of the radial thickness of the single-layer sleeve of ``model``."""
+    return _sleeve_thickness(model) / 3
+
+
+# A sleeve exactly 3 x mech_mesh thick has its area size equal to mech_mesh, but the thickness taken
+# from radii (r_sleeve_out - r_lam, or the outline) carries rounding noise of ~1e-14 mm either way
+# (e.g. 2.1 mm comes out as 2.0999999999999943). Within this relative margin the sizes count as
+# equal, so the rule does not depend on that noise.
+BORE_ARC_RTOL = 1e-9
+
+
+def _area_size_finer(thickness: float, mech_mesh: float) -> bool:
+    return thickness / 3 < mech_mesh * (1 - BORE_ARC_RTOL)
 
 
 def bore_arc_sized(p: Params, model: MechModel) -> bool:
     """True when the deck sizes the sleeve bore arc (the contact target) explicitly to ``mech_mesh``
     for a single-layer sleeve: the sleeve is thinner than 3 x ``mech_mesh``, so its area size
-    (thickness / 3) is finer than the lamination's. Layered sleeves size that arc always."""
+    (thickness / 3) is finer than the lamination's (equal within :data:`BORE_ARC_RTOL`: not
+    thinner). Layered sleeves size that arc always."""
     if model.sleeve is None or p.is_layered:
         return False
-    return _sleeve_area_size(model) < p.mech_mesh
+    return _area_size_finer(_sleeve_thickness(model), p.mech_mesh)
+
+
+def bore_arc_rule(p: Params) -> bool:
+    """:func:`bore_arc_sized` for the rotor model of ``p`` (:func:`mech_model_from_rotor`, whose
+    sleeve is ``p.r_lam`` .. ``p.r_sleeve_out``) from the parameters alone, without building the
+    geometry (the sweep asks it for every cached point)."""
+    return not p.is_layered and _area_size_finer(p.r_sleeve_out - p.r_lam, p.mech_mesh)
 
 
 def write_deck(p: Params, model: MechModel, path: str | Path, results_file: str = RESULTS_FILE,
