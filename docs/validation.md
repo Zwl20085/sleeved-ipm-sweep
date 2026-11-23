@@ -539,6 +539,12 @@ speed at which a contact element's pressure reaches zero.
   within the 0.5 % accuracy of the line found by the direct runs above (the governing element is
   partly open, its pressure 0.026 MPa, at the line's speed). Each search run took 13-45 s
   (several solver runs shared the workstation).
+* The "extra runs" column is the output `liftoff_extra_solves`. A contact whose pressure does not
+  fall with speed gives `inf` after one check run at 2 x the fastest case, as the line does; that
+  rule and a contact whose pressure rises and then falls are checked offline with synthetic
+  contacts (`test_liftoff_search_never_opens`, `test_liftoff_search_rising_then_falling`), as no
+  rotor here has such a contact. Neither rotor above reaches it: the numbers and trial speeds are
+  unchanged.
 * The contact status of the governing elements opens earlier than their pressure reaches zero
   (partly open elements carry pressure on their closed part). A search on "every element sliding
   or sticking" instead would give 21 469 rpm for the bridgeless rotor cold (between 21 437.5 and

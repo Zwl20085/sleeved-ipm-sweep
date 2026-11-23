@@ -139,7 +139,13 @@ files = sipm.plotResults(fullfile(tempdir, 'sipm_runs', 'demo', 'results.csv'), 
 Every finished point is cached in `<workdir>/<name>/cache/`; running the same sweep again
 solves only the missing points and those whose cached result predates a solver change that
 affects them (`--stop-after N` interrupts on purpose, `--retry-failed`
-re-runs failed points). Before each point the runner waits until `min_free_ram_gb` (4 GB) of
+re-runs failed points). Before solving, the runner logs how many cached points are solved again
+and for which solver change, and how many points run the bridgeless lift-off search (load cases
+of `sleeved_bridgeless`: up to 12 extra MAPDL runs per temperature, 2 for the default rotor;
+`liftoff_search_tol = 0` switches it off, lift-off then NaN). With the search switched off a
+point reuses a cached record of the same point solved without the search, so bridgeless load-case
+caches written before the search was added are not solved again for it (thin sleeves still are, for
+the bore-arc meshing). Before each point the runner waits until `min_free_ram_gb` (4 GB) of
 RAM is free and stops cleanly if that does not happen within `ram_wait_timeout_s`; with
 `max_solver_ram_gb` set it terminates a solver above that size and records the point as
 failed. AEDT is restarted every `aedt_restart_every` (10) EM points.
@@ -185,7 +191,8 @@ failed. AEDT is restarted every `aedt_restart_every` (10) EM points.
   and the lift-off speeds `liftoff_rpm_cold` / `liftoff_rpm_hot` with their basis in
   `liftoff_basis_cold` / `_hot` (for the bridgeless rotor, whose contact is not linear in speed,
   found by iteration with extra runs to `liftoff_search_tol`, 100 rpm; 0 switches that off and
-  leaves NaN); the un-suffixed columns then
+  leaves NaN; `liftoff_extra_solves` is the number of extra runs, written where the search ran;
+  `inf` where no contact pressure falls with speed); the un-suffixed columns then
   hold the case named in `mech_case` (`rated_hot` if requested).
 * **Layered sleeve** (`sleeve_layers`): the sleeve columns above are envelopes over the layers;
   per layer `sh_sleeve_max_L<i>` and `sleeve_sf_L<i>` (1 = bore), the governing layer

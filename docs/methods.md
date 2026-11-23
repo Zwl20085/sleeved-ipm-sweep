@@ -584,6 +584,19 @@ trial speeds (`loadcases.liftoff_search`, called by `mapdl.solve_mech_cases` whe
   estimate - 0.45 x the tolerance, which closes the bracket; bisection when the estimate lies
   outside the bracket or the bracket did not halve over three runs; 1.5 x the fastest closed
   speed when there is no estimate yet;
+* a contact that does not open: while no zero-pressure speed is known, if no element's pressure
+  is lower at the fastest closed solution than at the slowest (the `inf` criterion of the line)
+  nor lower at the fastest than at the second fastest, and the quadratic through the three fastest
+  has no zero up to 2 x the fastest solved case (`loadcases.SEARCH_NEVER_OPEN_FACTOR`), one run
+  is made at that speed; if the same still holds, the value is `inf` (one extra run), with a basis
+  that says so and names the speeds and runs it rests on; otherwise the search goes on. The
+  fastest case is the overspeed (1.2 x rated by default), so the check reaches 2.4 x rated speed
+  and 4 x its centrifugal load, beyond any operating or spin-test speed. The assumption: a
+  pressure that has not fallen anywhere up to that speed does not reach zero above it. A contact
+  whose pressure first rises and then falls is searched normally when the fall shows at the solved
+  speeds or the check run (an element lower at the faster of the two fastest closed solutions, a
+  zero of the quadratic below the check speed, or open at it); a fall that shows at neither reads
+  as `inf`;
 * stop when the bracket is at most `liftoff_search_tol` (default 100 rpm) wide; the value is its
   midpoint, within half the tolerance of the zero-pressure speed of the model;
 * at most 12 extra runs per temperature (`loadcases.SEARCH_MAX_SOLVES`); a search that does not
@@ -596,7 +609,11 @@ value was found by iteration and names the bracket, the cases and the number of 
 the line, the search assumes one transition from closed to open inside the bracket; an opening
 that closes again between two closed speeds would not be seen. The trial runs use the case deck at
 another speed (folders `liftoff_<label>_<n>`); they add two to a few runs to the point (two for the
-default bridgeless rotor cold) and their contact data are in `r["_liftoff_trials"]` (not cached).
+default bridgeless rotor cold) and their contact data are in `r["_liftoff_trials"]` (not cached);
+their number (every run started, a failed one included) is the output `liftoff_extra_solves`,
+written where the search ran. A sweep logs before solving how many of its points run the search;
+`liftoff_search_tol` = 0 switches it off, and a point with it off reuses a cached record of the
+same point that was solved without the search (section 5).
 The bridge-retained rotor keeps the two-point extrapolation: same runs, same values.
 
 ## 4. Composite sleeve model
@@ -859,8 +876,15 @@ missing points, so an interrupted sweep resumes. A solver change that alters the
 points without a parameter for the hash (`sipm.sweep.point_rules`: the bore-arc sizing of thin
 single-layer sleeves, section 3 item 2; the lift-off search, section 3.1) is recorded as a rule
 name in the cache records of the points it applies to; a cached record of such a point without
-that name was written by earlier code and is solved again under the same hash. Every other
-point keeps its hash, its record and its reuse. Invalid designs are recorded as
+that name was written by earlier code and is solved again under the same hash; the run logs how
+many points each rule re-solves. Every other point keeps its hash, its record and its reuse.
+`liftoff_search_tol` is in the hash except at its default, so a point with the search switched
+off (0) has a hash of its own; when that has no record, the record of the same point at the
+default tolerance is used if it does not list the lift-off search rule, i.e. it was solved without
+the search (by the code before it, or for a point the search does not apply to): the solver reads
+the tolerance only to run the search, so that record is this point's result
+(`sweep.search_off_fallback_key`). A record with the search, or one missing another rule, is not
+used; the point is then solved under its own hash. Invalid designs are recorded as
 `invalid`, solver errors as `failed` with the error text (MAPDL `*** ERROR ***` blocks,
 AEDT message-manager errors); neither stops the sweep. EM points that share a model are run
 back to back in one AEDT project.

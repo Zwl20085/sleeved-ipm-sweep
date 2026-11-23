@@ -45,6 +45,27 @@
   docs/validation.md section 11). The bridge-retained rotor keeps the two-point extrapolation
   (same runs, same values, same decks); `solve_mech_cases(..., liftoff_search=True/False)`
   forces the search on or off.
+* **Lift-off search: contacts that never open.** Where no contact pressure falls with speed the
+  search grew its trial speeds by 1.5 x until its 12 runs were spent (about 130 x the fastest
+  case) and returned NaN, while the line returns `inf`. It now uses the line's criterion (no
+  element's pressure lower at the fastest closed solution than at the slowest), and in addition
+  none falling between the two fastest and no zero of the quadratic through three below the check
+  speed, runs one check at 2 x the fastest solved case (`SEARCH_NEVER_OPEN_FACTOR`; 2.4 x rated,
+  4 x its centrifugal load) and returns `inf` if that still holds, with a basis that says so and
+  on which speeds. A pressure that rises and then falls is searched as before when the fall shows
+  at the solved speeds or the check run; one that shows at neither reads as `inf` (documented
+  assumption). Default bridgeless (24 414 rpm, 2 runs) and forced bridged (39 512 rpm) searches
+  do not reach the rule: same trial speeds, same values.
+* **Cost of the lift-off search made visible.** `Sweep.run` logs before solving how many of the
+  points to solve run the search (with the bound, 12 extra runs per temperature, and
+  `liftoff_search_tol = 0` to switch it off) and how many cached points each solver rule solves
+  again. New output `liftoff_extra_solves` (extra MAPDL runs of the search, failed ones included;
+  written only where the search ran). A point with `liftoff_search_tol = 0`, which has its own key,
+  reuses the record of the same point at the default tolerance if that lacks the
+  `liftoff-search` rule (solved without the search: the code before it, or a point it does not
+  apply to); before, bridgeless load-case caches of the earlier code were solved again under
+  either setting. Thin bridgeless sleeves are still solved again for the `bore-arc-mesh` rule.
+  Keys unchanged.
 * **Open-circuit and no-load field runs model the sleeve non-conducting** (as `ac_loss`): they
   start from a static field, so a conducting sleeve added its eddy start-up transient. With
   1e4 S/m axial the bridge-retained open-circuit EMF is the non-conducting 99.240 / 99.239 /

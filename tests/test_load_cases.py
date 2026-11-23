@@ -554,12 +554,12 @@ def test_liftoff_search_bounded_and_failures():
     k.f = np.array(SEXTIC)
     rpm, basis, trials = lc.liftoff_search(k.cases(), k.solve, 1e-3, max_solves=2)
     assert math.isnan(rpm) and len(k.calls) == 2 and "tolerance 0.001 rpm not reached" in basis
-    # a contact that never opens: trial speeds grow by SEARCH_GROWTH until the cap
-    never = Contact(c=[-1e-9] * 4)
+    # still closed when the solves run out (a falling contact with a huge lift-off speed)
+    slow = Contact(c=[1e-9] * 4, d=[-1e-19] * 4)   # falls, flattens out above zero: the estimate undershoots
     speeds = (("standstill_cold", 0.0), ("rated_cold", 20000.0))
-    rpm, basis, trials = lc.liftoff_search(never.cases(speeds), never.solve, 100.0, max_solves=3)
-    assert math.isnan(rpm) and "still closed" in basis
-    assert never.calls == pytest.approx([30000.0, 45000.0, 67500.0])   # no finite extrapolation: 1.5 x
+    rpm, basis, trials = lc.liftoff_search(slow.cases(speeds), slow.solve, 100.0, max_solves=1)
+    assert math.isnan(rpm) and "still closed" in basis and len(slow.calls) == 1 and trials[0]["closed"]
+    never = Contact(c=[-1e-9] * 4)   # (used below; never opening: test_liftoff_search_never_opens)
     # a failing trial run: NaN with the reason, nothing raised
 
     def boom(s):
@@ -576,6 +576,54 @@ def test_liftoff_search_bounded_and_failures():
     rpm, basis, trials = lc.liftoff_search(never.cases(speeds), other_mesh, 100.0)
     assert math.isnan(rpm) and "different contact elements" in basis and "failed" not in basis
     assert len(trials) == 1 and trials[0]["closed"] and "run at" not in basis
+
+
+def test_liftoff_search_never_opens():
+    """Pressure that does not fall with speed: inf, as the two-point line gives, after one check at
+    SEARCH_NEVER_OPEN_FACTOR x the fastest case; the basis says why and on what solutions."""
+    assert lc.SEARCH_NEVER_OPEN_FACTOR == 2.0
+    for c, speeds in (([-1e-9] * 4, (("standstill_cold", 0.0), ("rated_cold", 20000.0))),
+                      ([0.0, -1e-9, 0.0, -2e-9], (("standstill_cold", 0.0), ("rated_cold", 20000.0),
+                                                  ("overspeed_cold", 24000.0)))):
+        k = Contact(c=c)
+        assert lc.liftoff_at_temperature(k.cases(speeds))[0] == math.inf          # the linear path
+        rpm, basis, trials = lc.liftoff_search(k.cases(speeds), k.solve, 100.0)
+        fastest = speeds[-1][1]
+        assert rpm == math.inf and k.calls == [2.0 * fastest] and trials[0]["closed"]
+        assert basis.startswith("inf: contact pressure does not fall with speed")
+        assert f"up to {2 * fastest:.1f} rpm (check speed {2 * fastest:.1f} rpm = 2 x the fastest case)" in basis
+        assert "1 extra solve(s)" in basis
+        assert "+".join(n for n, _ in speeds) in basis
+    # a single closed case at a non-zero speed has no line: one 1.5 x step for the second point, then the check
+    k = Contact(c=[-1e-9] * 4)
+    rpm, basis, trials = lc.liftoff_search([("rated_cold", 20000.0, k.elems(20000.0))], k.solve, 100.0)
+    assert rpm == math.inf and k.calls == pytest.approx([30000.0, 40000.0]) and "2 extra solve(s)" in basis
+
+
+def test_liftoff_search_rising_then_falling():
+    """Pressure that rises with speed over the solved cases and falls above them: not inf when the fall
+    shows at the check speed (2 x the fastest case) or in the curvature through three closed solutions;
+    the search then finds the opening as for any contact."""
+    # higher at 20000 rpm than at standstill (two-point line: inf), peak near 15.8k rpm, opens near
+    # 38.7k rpm: open at the check speed 40000 rpm, then searched inside (20000, 40000)
+    k = Contact(c=[-1e-9] * 4, d=[2e-18] * 4)
+    speeds = (("standstill_cold", 0.0), ("rated_cold", 20000.0))
+    assert lc.liftoff_at_temperature(k.cases(speeds))[0] == math.inf
+    rpm, basis, trials = lc.liftoff_search(k.cases(speeds), k.solve, 100.0)
+    assert k.calls[0] == 40000.0 and not trials[0]["closed"]
+    assert abs(rpm - k.first_opening()) <= 50.0 and "found by iteration" in basis
+    assert all(20000.0 < s <= 40000.0 for s in k.calls) and len(k.calls) <= 8
+    # rising at all three cases (peak 28.3k rpm), curving down to zero near 43.1k rpm < 2 x 24000:
+    # estimated from the quadratic at once, no check run
+    k2 = Contact(c=[-1e-8] * 4, d=[6.25e-18] * 4)
+    assert lc.liftoff_at_temperature(k2.cases())[0] == math.inf
+    rpm, basis, trials = lc.liftoff_search(k2.cases(), k2.solve, 100.0)
+    assert 40000 < k2.first_opening() < 48000.0 and 48000.0 not in k2.calls
+    assert abs(rpm - k2.first_opening()) <= 50.0 and len(k2.calls) <= 3
+    # still rising at the check speed, the fall far above it (peak near 240k rpm): inf, the documented limit
+    k3 = Contact(c=[-1e-9] * 4, f=[1e-31] * 4)
+    rpm, basis, _ = lc.liftoff_search(k3.cases(speeds), k3.solve, 100.0)
+    assert rpm == math.inf and k3.calls == [40000.0] and k3.first_opening() < 1e6
 
 
 def test_search_applies():
@@ -639,6 +687,28 @@ def test_solve_mech_cases_bridgeless_searches(monkeypatch, tmp_path):
     # switched off: NaN with the not-linear reason, no extra run
     fake3, _, r3 = _cases_point(monkeypatch, "sleeved_bridgeless", liftoff_search_tol=0.0)
     assert len(fake3.runs) == 6 and math.isnan(r3["liftoff_rpm_cold"]) and "not linear" in r3["liftoff_basis_cold"]
+    # the cost of the search is an output: every run it started, once for equal temperatures
+    assert r["liftoff_extra_solves"] == len(extra) > 0
+    assert r2["liftoff_extra_solves"] == sum(1 for x in fake2.runs if x[0].startswith("liftoff"))
+    assert "liftoff_extra_solves" not in r3
+
+
+def test_liftoff_extra_solves_counts_a_failed_run(monkeypatch):
+    import sipm.mapdl as mp
+
+    class FailingTrials(FakeSingle):
+        def __call__(self, q, cfg, wd, *a, **k):
+            if Path(wd).name.startswith("liftoff_"):
+                self.runs.append((Path(wd).name, q.mech_rpm, q.mech_temperature))
+                raise mp.MapdlError("no convergence")
+            return super().__call__(q, cfg, wd, *a, **k)
+
+    fake = FailingTrials(Contact(d=QUARTIC), Contact(d=QUARTIC))
+    monkeypatch.setattr(mp, "_solve_single", fake)
+    p = default_params("sleeved_bridgeless", mech_temperature=120.0, mech_cases=ALL)
+    r = mp.solve_mech_cases(p, Config(min_free_ram_gb=0), Path("unused"), mp.mech_model_from_rotor(build_rotor(p)))
+    assert math.isnan(r["liftoff_rpm_cold"]) and math.isnan(r["liftoff_rpm_hot"])
+    assert "failed" in r["liftoff_basis_cold"] and r["liftoff_extra_solves"] == 2   # one failed run per temperature
 
 
 def test_solve_mech_cases_bridged_untouched(monkeypatch):
@@ -773,6 +843,116 @@ def test_point_rules_build_no_geometry(monkeypatch):
     assert sweep.point_rules(default_params("sleeved_bridged", sleeve_thickness=1.0), "mech") == (sweep.RULE_BORE_ARC,)
     assert sweep.point_rules(default_params("sleeved_bridgeless", mech_cases=ALL), "mech") == (
         sweep.RULE_BORE_ARC, sweep.RULE_LIFTOFF_SEARCH)
+
+
+class LiftoffSolver(CountingSolver):
+    """Returns lift-off columns (``inf`` for a contact that never opens) and, when the search applies,
+    the count of its extra runs, as solve_mech_cases does."""
+
+    def __call__(self, p, wd):
+        self.n += 1
+        out = dict(svm_rotor_max=100.0, liftoff_rpm_cold=math.inf, liftoff_basis_cold="never opens",
+                   liftoff_rpm_hot=math.nan, liftoff_basis_hot="not computed")
+        if lc.search_applies(p):
+            out["liftoff_extra_solves"] = 1
+        return out
+
+
+def test_inf_liftoff_in_cache_and_csv(tmp_path):
+    """inf is written to the cache (JSON Infinity) and results.csv and read back as inf, on the linear
+    (bridge-retained) and the search (bridgeless) path alike; liftoff_extra_solves only where searched."""
+    cfg = Config(workdir=tmp_path, min_free_ram_gb=0)
+    rows = [{"topology": "sleeved_bridged"}, {"topology": "sleeved_bridgeless"}]
+    sw = Sweep("inf", "mech", rows, base=dict(mech_cases=ALL), cfg=cfg)
+    df = sw.run(solver=LiftoffSolver(), progress=None)
+    assert list(df["liftoff_rpm_cold"]) == [math.inf, math.inf]
+    for _, _, _, key, _ in sw.plan():
+        text = sw._cache_path(key).read_text()
+        assert '"liftoff_rpm_cold": Infinity' in text and '"liftoff_rpm_hot": NaN' in text
+    csv = pd.read_csv(sw.dir / "results.csv")
+    assert list(csv["liftoff_rpm_cold"]) == [math.inf, math.inf] and csv["liftoff_rpm_hot"].isna().all()
+    assert math.isnan(csv["liftoff_extra_solves"][0]) and csv["liftoff_extra_solves"][1] == 1
+
+
+def _strip_rules(sw, i):
+    """Make the record of row i look like one of the code before the solver rules."""
+    f = sw._cache_path(sw.plan()[i][3])
+    rec = json.loads(f.read_text())
+    rec.pop("rules", None)
+    f.write_text(json.dumps(rec))
+
+
+def test_sweep_logs_search_and_rule_costs(tmp_path):
+    cfg = Config(workdir=tmp_path, min_free_ram_gb=0)
+    rows = [{"topology": "sleeved_bridgeless"}, {"topology": "sleeved_bridgeless", "sleeve_thickness": 1.5},
+            {"topology": "sleeved_bridged"}]
+    sw = Sweep("cost", "mech", rows, base=dict(mech_cases=ALL), cfg=cfg)
+    lines = []
+    sw.run(solver=CountingSolver(), progress=lines.append)
+    search = [s for s in lines if "run the lift-off search" in s]
+    assert search == ["[cost] 2 of the 3 points to solve run the lift-off search (rule liftoff-search): up to 12 "
+                      "extra MAPDL runs per temperature each, 24 per point; liftoff_search_tol = 0 switches it off "
+                      "(lift-off NaN)"]
+    assert not any("solved again" in s for s in lines)
+    for i in range(3):
+        _strip_rules(sw, i)
+    lines = []
+    s = CountingSolver()
+    sw.run(solver=s, progress=lines.append)
+    assert s.n == 2                                              # the bridged default record stays current
+    assert "[cost] 1 cached point(s) solved again: the record predates solver rule bore-arc-mesh" in lines
+    assert ("[cost] 2 cached point(s) solved again: the record predates solver rule liftoff-search; with "
+            "liftoff_search_tol = 0 a record that lacks only this rule is reused") in lines
+    lines = []
+    sw.run(solver=CountingSolver(), progress=lines.append)
+    assert lines[0] == "[cost] 3 points, 0 to solve, 0 invalid" and len(lines) == 1   # nothing to say
+
+
+def test_search_off_reuses_records_without_the_search(tmp_path):
+    """liftoff_search_tol = 0 changes the key (it is omitted at the default only); such a point reuses the
+    record of the same point at the default tolerance if that was solved without the search (code before
+    it): a pre-search bridgeless load-case record lacking only the search rule is not solved again. A
+    record with the search, or one missing another rule, is not used: the point is solved under its own
+    key. Keys are unchanged."""
+    from sipm.sweep import search_off_fallback_key
+
+    cfg = Config(workdir=tmp_path, min_free_ram_gb=0)
+    thick = {"topology": "sleeved_bridgeless", "sleeve_thickness": 1.5, "mech_cases": ALL}
+    thin = {"topology": "sleeved_bridgeless", "mech_cases": ALL}
+    old = Sweep("old", "mech", [thick, thin], cfg=cfg)
+    old.run(solver=CountingSolver(), progress=None)
+    default_keys = [t[3] for t in old.plan()]
+    p_thick = old.plan()[0][2]
+    assert p_thick.liftoff_search_tol == 100.0 and point_key(p_thick, "mech") == default_keys[0]
+    off = Sweep("old", "mech", [dict(thick, liftoff_search_tol=0.0), dict(thin, liftoff_search_tol=0.0)], cfg=cfg)
+    off_keys = [t[3] for t in off.plan()]
+    assert off_keys[0] != default_keys[0] and off_keys[0] == point_key(p_thick.replace(liftoff_search_tol=0.0), "mech")
+    assert search_off_fallback_key(off.plan()[0][2], "mech") == default_keys[0]
+    assert search_off_fallback_key(p_thick, "mech") is None and search_off_fallback_key(off.plan()[0][2], "em") is None
+    # records written with the search are not reused for the search switched off
+    s = CountingSolver()
+    off.run(solver=s, progress=None)
+    assert s.n == 2 and all(off._cache_path(k).exists() for k in off_keys)
+    for k in off_keys:
+        off._cache_path(k).unlink()
+    # pre-search records (no rules): the thick one is reused, the thin one lacks bore-arc-mesh as well
+    _strip_rules(old, 0)
+    _strip_rules(old, 1)
+    df = off.results()
+    assert list(df["status"]) == ["ok", "pending"] and df["svm_rotor_max"][0] == 101.0
+    lines = []
+    s = CountingSolver()
+    df = off.run(solver=s, progress=lines.append)
+    assert s.n == 1 and list(df["status"]) == ["ok", "ok"] and not off._cache_path(off_keys[0]).exists()
+    assert "[old] 1 point(s) with liftoff_search_tol = 0 reuse the record of the same point at the default " \
+           "tolerance, solved without the search" in lines
+    assert "rules" not in json.loads(old._cache_path(default_keys[0]).read_text())   # the old record is untouched
+    # at the default tolerance the same pre-search record is solved again (it lacks the search rule)
+    s = CountingSolver()
+    old.run(solver=s, progress=None)
+    assert s.n == 2
+    # ... after which it carries the search and the switched-off point no longer reuses it
+    assert off.results()["status"][0] == "pending"
 
 
 # ---- closed-form lift-off -------------------------------------------------------------------

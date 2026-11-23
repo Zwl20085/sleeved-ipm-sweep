@@ -209,6 +209,12 @@ def liftoff_at_temperature(entries: Sequence[tuple[str, float, Mapping[str, np.n
 # ----------------------------------------------------------------------------- lift-off by search
 SEARCH_MAX_SOLVES = 12   # extra MAPDL runs per temperature, upper bound of liftoff_search
 SEARCH_GROWTH = 1.5      # factor between trial speeds while no bracket exists above the solved cases
+# A contact whose pressure does not fall with speed (the inf of the two-point line) is checked with
+# one trial at this multiple of the fastest solved case before the search returns inf. The fastest
+# case is the overspeed (overspeed_factor x mech_rpm, default 1.2), so the check reaches 2.4 x rated
+# speed and 4 x the centrifugal load of that case: beyond any operating or spin-test speed (spin
+# tests run at about 1.2 x the maximum speed), so a lift-off above it has no design meaning.
+SEARCH_NEVER_OPEN_FACTOR = 2.0
 
 
 def search_applies(p: Params) -> bool:
@@ -294,13 +300,27 @@ def liftoff_search(entries: Sequence[tuple[str, float, Mapping[str, np.ndarray]]
       lies outside the bracket or the bracket did not halve over the last three trials; without
       an estimate and no zero-pressure speed yet, :data:`SEARCH_GROWTH` x the fastest closed
       speed;
+    * a contact that does not open: while no zero-pressure speed is known and the two-point line
+      gives ``inf`` both through the slowest and the fastest closed solution (the criterion of the
+      linear path: no element's pressure lower at the faster one) and through the two fastest,
+      and the quadratic in s^2 through the three fastest has no zero up to ``limit`` =
+      :data:`SEARCH_NEVER_OPEN_FACTOR` x the fastest solved case (no element's pressure falls at
+      the top of the range, and none curves down to zero below ``limit``), one trial runs at
+      ``limit``. If the same holds with it, the result is ``inf`` (one extra solve); otherwise
+      (open there, or falling) the search goes on as above;
     * stop when ``hi - lo <= tol``; the result is the midpoint, within ``tol / 2`` of the lift-off
       speed as resolved by the trials.
 
     At most ``max_solves`` extra solves; if the tolerance is not reached within them the result is
     NaN, with the last bracket in the basis. Like the two-point line, the search assumes one
     transition from closed to open in [lo, hi]; an opening that closes again between two closed
-    speeds would not be seen. Returns (rpm, basis, trials), trials = one dict per extra solve
+    speeds would not be seen. For ``inf`` it assumes in addition that a pressure which has not
+    fallen at any element between the slowest case and ``limit`` (judged at the solved speeds and
+    the trial at ``limit``) does not reach zero above ``limit``: a contact whose pressure first
+    rises and then falls is found when the fall shows at the solved speeds or at ``limit`` (an
+    element's pressure lower at the faster of the two fastest closed solutions, a zero of the
+    quadratic through three below ``limit``, or the contact open at ``limit``); a fall that does
+    not show there reads as ``inf``. Returns (rpm, basis, trials), trials = one dict per extra solve
     (rpm, closed = :func:`pressure_closed`, p_min, n_open = elements with zero pressure or an
     open status)."""
     rows = _rows(entries)
@@ -351,17 +371,38 @@ def liftoff_search(entries: Sequence[tuple[str, float, Mapping[str, np.ndarray]]
     def stopped(why: str) -> tuple[float, str, list[dict]]:
         return math.nan, f"not found: search stopped after {len(trials)} extra solve(s), {why}", trials
 
+    limit = SEARCH_NEVER_OPEN_FACTOR * rows[-1][1]   # check speed of a contact that does not open
+
+    def never_falls() -> bool:
+        # the inf of the two-point line through the slowest and the fastest closed solution (the criterion
+        # of the linear path) and through the two fastest, and no zero of the quadratic through the three
+        # fastest below the limit (a zero beyond it, e.g. from the noise of a flat contact, is not chased)
+        if any(not math.isinf(liftoff_from_elements(sa, ea, sb, eb)[0])
+               for (sa, ea), (sb, eb) in ((closed[0], closed[-1]), (closed[-2], closed[-1]))):
+            return False
+        return len(closed) < 3 or not _quadratic_zero(closed[-3:]) <= limit
+
     widths: list[float] = []
     try:
         if hi is None and closed[-1][0] == 0:
             return math.nan, "needs a case with closed contact at a non-zero speed", trials
         while hi is None or hi - closed[-1][0] > tol:
             lo = closed[-1][0]
+            flat = hi is None and len(closed) >= 2 and never_falls()
+            if flat and lo >= limit:
+                return math.inf, (
+                    f"inf: contact pressure does not fall with speed (no element's pressure lower at {lo:.1f} "
+                    f"rpm than at {closed[0][0]:.1f} rpm or falling between the two fastest closed solutions), "
+                    f"positive everywhere up to {lo:.1f} rpm (check speed {limit:.1f} rpm = "
+                    f"{SEARCH_NEVER_OPEN_FACTOR:g} x the fastest case), "
+                    f"from the cases {'+'.join(r[0] for r in rows)} and {len(trials)} extra solve(s)"), trials
             if len(trials) >= max_solves:
                 return stopped(f"still closed at {lo:.1f} rpm" if hi is None else
                                f"closed at {lo:.1f}, zero pressure at {hi:.1f} rpm, tolerance {tol:g} rpm not reached")
             est = estimate()
-            if hi is None:
+            if flat:                  # one check at the limit speed before inf
+                s = limit
+            elif hi is None:
                 s = est + 0.45 * tol if math.isfinite(est) and est > lo else SEARCH_GROWTH * lo
                 s = max(s, lo + tol)
             else:

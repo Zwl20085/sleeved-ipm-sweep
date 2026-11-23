@@ -968,7 +968,9 @@ def solve_mech_cases(p: Params, cfg: Config | None = None, workdir: str | Path |
     single-case runs at trial speeds (``<workdir>/liftoff_<label>_<n>``, the deck of the cases at
     another speed). ``liftoff_search`` True / False forces the search on / off (validation and
     tests; None = by that rule); forced on, a ``liftoff_search_tol`` of 0 is an error. The trial
-    runs are listed in ``r["_liftoff_trials"]`` (label -> list of dicts; not cached)."""
+    runs are listed in ``r["_liftoff_trials"]`` (label -> list of dicts; not cached) and counted in
+    the output ``liftoff_extra_solves`` (every run started, a failed one included; one search serves
+    both labels at equal temperatures), written only where the search ran."""
     from . import loadcases
 
     cfg = cfg or Config()
@@ -991,10 +993,11 @@ def solve_mech_cases(p: Params, cfg: Config | None = None, workdir: str | Path |
     search = loadcases.search_applies(p) if liftoff_search is None else liftoff_search
     if not (search and contact):
         return loadcases.combine(p, results, wall_s=time.time() - t0)
-    searched, trials, by_temp = {}, {}, {}
+    searched, trials, by_temp, runs = {}, {}, {}, []
     for label, temp in (("cold", p.mech_temperature_cold), ("hot", p.mech_temperature)):
         if temp not in by_temp:   # equal temperatures: one search for both labels
             n = [0]
+            runs.append(n)
 
             def solve_at(rpm: float, temp=temp, label=label, n=n) -> dict:
                 n[0] += 1
@@ -1010,6 +1013,7 @@ def solve_mech_cases(p: Params, cfg: Config | None = None, workdir: str | Path |
             by_temp[temp] = ((rpm, basis), tr)
         searched[label], trials[label] = by_temp[temp]
     out = loadcases.combine(p, results, wall_s=time.time() - t0, searched=searched)
+    out["liftoff_extra_solves"] = sum(m[0] for m in runs)   # MAPDL runs started by the search, failed ones too
     out["_liftoff_trials"] = trials
     return out
 

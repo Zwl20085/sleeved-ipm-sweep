@@ -5,7 +5,10 @@
   ``<workdir>/<name>/cache/<key>.json`` as soon as it finishes;
 * re-running the same sweep skips cached points, so an interrupted sweep resumes
   where it stopped (failed points are kept as failures unless ``retry_failed``); a cached
-  point that a later solver rule changed (:func:`point_rules`) is solved again;
+  point that a later solver rule changed (:func:`point_rules`) is solved again (logged per rule
+  before solving, with the number of points that run the lift-off search); a point with the
+  lift-off search switched off reuses the record of the same point at the default tolerance if
+  that was solved without the search (:func:`search_off_fallback_key`);
 * invalid designs (parameter or geometry errors) and solver failures are recorded
   with their message and never stop the sweep;
 * EM points that share a Maxwell model (same parameters apart from ``gamma`` and
@@ -104,6 +107,22 @@ def is_current(record: dict | None, rules: Iterable[str]) -> bool:
     return record is not None and set(rules) <= set(record.get("rules", ()))
 
 
+def search_off_fallback_key(p: Params, physics: str) -> str | None:
+    """Second cache key of a mech point with ``liftoff_search_tol`` = 0 (search switched off), or None.
+
+    ``liftoff_search_tol`` is in the key except at its default, so a point with the search switched
+    off hashes apart from the same point at the default, which hashes as before the search existed.
+    The solver reads the tolerance only to decide and run the search; a record under the default key
+    that does not list :data:`RULE_LIFTOFF_SEARCH` was therefore solved without the search (code
+    before it, or a point it does not apply to) and is the result of this point too: :meth:`Sweep.run`
+    and :meth:`Sweep.results` use it when the point's own key has no record and the record is
+    current for the point's own rules (:func:`is_current`). A record that lists the rule holds
+    searched lift-off values and is not used."""
+    if physics != "mech" or p.liftoff_search_tol != 0:
+        return None
+    return point_key(p.replace(liftoff_search_tol=_FIELD_DEFAULTS["liftoff_search_tol"]), physics)
+
+
 def _atomic_write_json(path: Path, obj) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
@@ -174,6 +193,21 @@ class Sweep:
         except json.JSONDecodeError:
             return None  # a torn write cannot happen with os.replace, but be tolerant
 
+    def lookup(self, p: Params, key: str, rules: Iterable[str]) -> tuple[dict | None, str | None]:
+        """The cache record of a point and the key it was found under: its own ``key``, or for a
+        point with the lift-off search switched off and no record of its own, the record of the
+        same point at the default tolerance if that was solved without the search
+        (:func:`search_off_fallback_key`). (None, None) if neither."""
+        c = self.load_cached(key)
+        if c is not None:
+            return c, key
+        fk = search_off_fallback_key(p, self.physics)
+        if fk is not None:
+            f = self.load_cached(fk)
+            if f is not None and RULE_LIFTOFF_SEARCH not in f.get("rules", ()) and is_current(f, rules):
+                return f, fk
+        return None, None
+
     def plan(self):
         """Resolve all rows: list of (index, row, Params|None, key|None, error|None)."""
         out = []
@@ -209,20 +243,27 @@ class Sweep:
         make_wd = watchdog or (lambda pids: Watchdog(pids, cap_gb=cap, poll_s=1.0))
         self.dir.mkdir(parents=True, exist_ok=True)
         plan = self.plan()
-        todo = []
+        todo, stale, borrowed = [], {}, 0
         for i, row, p, key, err in plan:
             if err is not None:
                 continue
-            c = self.load_cached(key)
             rules = point_rules(p, self.physics)
+            c, found = self.lookup(p, key, rules)
+            if c is not None and not is_current(c, rules):
+                for r in set(rules) - set(c.get("rules", ())):
+                    stale[r] = stale.get(r, 0) + 1
             if not is_current(c, rules) or (retry_failed and c.get("status") != "ok"):
                 todo.append((i, row, p, key, rules))
+            elif found != key:
+                borrowed += 1
         if self.physics in ("em", "acloss"):
             from .maxwell import em_model_key
 
             todo.sort(key=lambda t: (em_model_key(t[2]), t[0]))
         log(f"[{self.name}] {len(plan)} points, {len(todo)} to solve, "
             f"{sum(1 for t in plan if t[4])} invalid")
+        for line in _cost_notes(todo, stale, borrowed):
+            log(f"[{self.name}] {line}")
         solved = 0
         ctx = solver or _default_solver(self.physics, self.cfg)
         try:
@@ -286,8 +327,8 @@ class Sweep:
             if err is not None:
                 r.update(status="invalid", message=err)
             else:
-                c = self.load_cached(key)
                 rules = point_rules(p, self.physics)
+                c, _found = self.lookup(p, key, rules)
                 if c is None:
                     r.update(status="pending", message="")
                 elif not is_current(c, rules):
@@ -314,6 +355,27 @@ class Sweep:
                 if c and c.get("status") == "ok" and "wave" in c.get("extra", {}):
                     out[i] = c["extra"]["wave"]
         return out
+
+
+def _cost_notes(todo: list, stale: dict[str, int], borrowed: int) -> list[str]:
+    """Log lines on the solver work that is not plain: points that run the lift-off search, cached
+    points solved again because of a solver rule, records reused from the default tolerance."""
+    from .loadcases import SEARCH_MAX_SOLVES
+
+    lines = []
+    n = sum(1 for t in todo if RULE_LIFTOFF_SEARCH in t[4])
+    if n:
+        lines.append(f"{n} of the {len(todo)} points to solve run the lift-off search (rule {RULE_LIFTOFF_SEARCH}): "
+                     f"up to {SEARCH_MAX_SOLVES} extra MAPDL runs per temperature each, "
+                     f"{2 * SEARCH_MAX_SOLVES} per point; liftoff_search_tol = 0 switches it off (lift-off NaN)")
+    for rule in sorted(stale):
+        hint = ("; with liftoff_search_tol = 0 a record that lacks only this rule is reused"
+                if rule == RULE_LIFTOFF_SEARCH else "")
+        lines.append(f"{stale[rule]} cached point(s) solved again: the record predates solver rule {rule}{hint}")
+    if borrowed:
+        lines.append(f"{borrowed} point(s) with liftoff_search_tol = 0 reuse the record of the same point at the "
+                     "default tolerance, solved without the search")
+    return lines
 
 
 def _brief(o: dict) -> str:
