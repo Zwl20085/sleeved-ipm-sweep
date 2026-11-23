@@ -146,17 +146,55 @@ def test_deck_unchanged_without_cases(tmp_path, key):
     ("sleeved_bridgeless", {}, True),                                  # 0.5 mm sleeve: area size 0.167 < 0.5
     ("sleeved_bridgeless", dict(sleeve_thickness=1.5), False),         # area size = mech_mesh: deck as before
     ("sleeved_bridgeless", dict(sleeve_thickness=0.9, mech_mesh=0.8), True),
-    ("sleeved_bridged", {}, False),
-    ("sleeved_bridged", dict(sleeve_thickness=1.0), False),            # bridge-retained decks are not touched
+    ("sleeved_bridged", {}, False),                                    # 1.5 mm: equal sizes, default deck pinned
+    ("sleeved_bridged", dict(sleeve_thickness=1.0), True),             # thin bridge-retained sleeve: same rule
+    ("sleeved_bridged", dict(mech_mesh=0.8, mech_mesh_fine=0.3), True),   # coarse mesh: 0.5 < 0.8
+    ("sleeved_bridged", dict(sleeve_thickness=2.0), False),
+    ("sleeved_bridged", dict(mech_mesh=0.3, mech_mesh_fine=0.08), False),
+    ("ring", {}, False),                                               # 1.5 mm ring of the closed-form check
 ])
-def test_bridgeless_bore_arc_sized_like_lamination(tmp_path, topo, kw, sized):
-    p = default_params(topo, **kw)
+def test_bore_arc_sized_like_lamination(tmp_path, topo, kw, sized):
+    from sipm.mapdl import bore_arc_sized
+
+    p = default_params("sleeved_bridged" if topo == "ring" else topo, **kw)
     lines = _deck_text(tmp_path, topo, p).splitlines()
     bore = [ln for ln in lines if ln.startswith("LESIZE,30003")]
     assert bore == ([f"LESIZE,30003,{p.mech_mesh:.10g},,,,1"] if sized else [])
+    model = mech_model_ring(71.1, 1.5) if topo == "ring" else mech_model_from_rotor(build_rotor(p))
+    assert bore_arc_sized(p, model) is sized
     if sized:   # after the area size of the sleeve (which it overrides on that line) and before meshing
-        aesize = "AESIZE,ALL,%.10g" % (p.sleeve_thickness / 3)
+        aesize = "AESIZE,ALL,%.10g" % min(p.mech_mesh, p.sleeve_thickness / 3)
         assert lines.index(aesize) < lines.index(bore[0]) < lines.index("AMESH,ALL")
+
+
+def test_bore_arc_rule_adds_one_line_only(tmp_path):
+    """On a thin bridge-retained sleeve the rule adds the one LESIZE line and changes nothing else."""
+    p = default_params("sleeved_bridged", sleeve_thickness=1.0)
+    lines = _deck_text(tmp_path, "sleeved_bridged", p).splitlines()
+    i = lines.index("LESIZE,30003,0.5,,,,1")
+    assert lines[i - 1] == "ALLSEL" and lines[i - 2] == "AESIZE,ALL,%.10g" % (1.0 / 3)
+    # layered sleeves size their bore arc themselves and are not affected
+    from sipm.mapdl import bore_arc_sized
+
+    q = default_params("sleeved_bridged", sleeve_thickness=1.0, sleeve_fibre="carbon_sm", sleeve_layers="0:1,30:1")
+    assert not bore_arc_sized(q, mech_model_from_rotor(build_rotor(q)))
+
+
+@pytest.mark.parametrize("topo", ["sleeved_bridged", "sleeved_bridgeless"])
+@pytest.mark.parametrize("t", [0.9, 1.05, 1.2, 1.5, 1.8, 2.1])
+def test_bore_arc_rule_at_exactly_three_elements(tmp_path, topo, t):
+    """A sleeve exactly 3 x mech_mesh thick is not thinner: no LESIZE line, whatever the rounding of
+    the thickness taken from the radii (2.1 mm comes out as 2.0999999999999943, 1.8 mm with the
+    0.6 mm mesh fired the rule before the margin); the parameter-only rule of the sweep agrees with
+    the deck, also just below and above the boundary."""
+    from sipm.mapdl import bore_arc_rule, bore_arc_sized
+
+    for mesh, sized in ((t / 3, False), (t / 3 * 1.001, True), (t / 3 * 0.999, False)):
+        p = default_params(topo, sleeve_thickness=t, mech_mesh=mesh, mech_mesh_fine=min(0.15, mesh))
+        model = mech_model_from_rotor(build_rotor(p))
+        assert bore_arc_sized(p, model) is sized and bore_arc_rule(p) is sized
+        lines = _deck_text(tmp_path, topo, p).splitlines()
+        assert any(ln.startswith("LESIZE,30003") for ln in lines) is sized
 
 
 @pytest.mark.parametrize("topo", ["sleeved_bridged", "sleeved_bridgeless", "ring"])
@@ -400,6 +438,341 @@ def test_liftoff_outputs_temperatures_and_linearity():
     for kw in (dict(mu_sleeve=0.1), dict(magnet_contact="frictional")):
         o = lc.liftoff_outputs(p.replace(**kw), res)
         assert math.isnan(o["liftoff_rpm_cold"]) and "not linear" in o["liftoff_basis_cold"]
+
+
+# ---- lift-off by search (contacts not linear in speed) --------------------------------------
+class Contact:
+    """Synthetic contact: element pressures p0_e - c_e s^2 - d_e s^4 (d = 0: the linear model), an element
+    open (status 0) where its pressure is <= 0. ``solve`` counts the calls like a MAPDL run would."""
+
+    def __init__(self, p0=P0, c=C, d=(0.0, 0.0, 0.0, 0.0), f=(0.0, 0.0, 0.0, 0.0)):
+        self.p0, self.c, self.d, self.f = (np.asarray(v, float) for v in (p0, c, d, f))
+        self.calls = []
+
+    def pres(self, s):
+        return self.p0 - self.c * s * s - self.d * s ** 4 - self.f * s ** 6
+
+    def elems(self, s):
+        pres = self.pres(s)
+        el = _elems(np.maximum(pres, 0.0), np.zeros(len(pres)), 0.0)
+        el["pres"], el["status"] = np.maximum(pres, 0.0), np.where(pres > 0, 2.0, 0.0)
+        return el
+
+    def solve(self, s):
+        self.calls.append(s)
+        return self.elems(s)
+
+    def first_opening(self):
+        """Lowest speed at which an element's pressure reaches 0 (bisection to 1e-9 rpm)."""
+        lo, hi = 0.0, 1e6
+        for _ in range(200):
+            m = 0.5 * (lo + hi)
+            lo, hi = (m, hi) if np.all(self.pres(m) > 0) else (lo, m)
+        return hi
+
+    def cases(self, speeds=(("standstill_cold", 0.0), ("rated_cold", 20000.0), ("overspeed_cold", 24000.0))):
+        return [(n, s, self.elems(s)) for n, s in speeds]
+
+
+QUARTIC = (0.0, 0.0, 2.0e-18, 0.0)   # element 2 opens earlier than its two-point line predicts
+SEXTIC = (0.0, 0.0, 1.0e-27, 0.0)    # ... and is not quadratic in s^2 either
+
+
+def test_quadratic_zero_exact_for_quadratic_in_speed_squared():
+    k = Contact(d=QUARTIC)
+    pts = [(s, k.elems(s)) for s in (0.0, 20000.0, 24000.0)]
+    assert lc._quadratic_zero(pts) == pytest.approx(k.first_opening(), rel=1e-9)
+    lin = Contact()
+    assert lc._quadratic_zero([(s, lin.elems(s)) for s in (0.0, 20000.0, 24000.0)]) == pytest.approx(
+        math.sqrt(5.0 / 4.0e-9), rel=1e-9)
+    never = Contact(c=[-1e-9] * 4)
+    assert lc._quadratic_zero([(s, never.elems(s)) for s in (0.0, 1e4, 2e4)]) == math.inf
+
+
+@pytest.mark.parametrize("tol", [100.0, 10.0])
+def test_liftoff_search_brackets_above_the_cases(tol):
+    """All cases closed: first trial just beyond the extrapolation through the three fastest closed
+    cases (quadratic in s^2 per element), then further estimates; the result lies within tol / 2 of the
+    true lift-off speed, and the basis states the iteration and its solve count."""
+    k = Contact(d=QUARTIC, f=SEXTIC)
+    exact = k.first_opening()
+    rpm, basis, trials = lc.liftoff_search(k.cases(), k.solve, tol)
+    est = lc._quadratic_zero([(s, k.elems(s)) for s in (0.0, 20000.0, 24000.0)])
+    line, _ = lc.liftoff_from_elements(20000.0, k.elems(20000.0), 24000.0, k.elems(24000.0))
+    assert k.calls[0] == pytest.approx(est + 0.45 * tol, rel=1e-12) and line > est > exact
+    assert abs(rpm - exact) <= tol / 2 and len(trials) == len(k.calls) <= 8
+    assert [t["rpm"] for t in trials] == k.calls
+    assert basis.startswith("found by iteration: pressure positive at ")
+    assert f"{len(k.calls)} extra solve(s)" in basis and f"tolerance {tol:g} rpm" in basis
+    assert "standstill_cold+rated_cold+overspeed_cold" in basis
+    lo = max([24000.0] + [t["rpm"] for t in trials if t["closed"]])
+    hi = min(t["rpm"] for t in trials if not t["closed"])
+    assert hi - lo <= tol and rpm == pytest.approx(0.5 * (lo + hi))
+
+
+def test_liftoff_search_reproduces_the_linear_extrapolation():
+    """On a linear contact the search finds the two-point lift-off speed within its tolerance."""
+    k = Contact()
+    line, basis_line = lc.liftoff_at_temperature(k.cases())
+    rpm, basis, _ = lc.liftoff_search(k.cases(), k.solve, 50.0)
+    assert line == pytest.approx(math.sqrt(5.0 / 4.0e-9), rel=1e-9)
+    assert abs(rpm - line) <= 50.0 and "found by iteration" in basis
+
+
+def test_liftoff_search_bracket_from_the_cases():
+    """An open overspeed case brackets the search: no trial outside (rated, overspeed)."""
+    k = Contact(d=QUARTIC)
+    speeds = (("standstill_cold", 0.0), ("rated_cold", 20000.0), ("overspeed_cold", 40000.0))
+    rpm, basis, trials = lc.liftoff_search(k.cases(speeds), k.solve, 100.0)
+    assert all(20000.0 < s < 40000.0 for s in k.calls)
+    # fewer solves than plain bisection of the 20000 rpm bracket to 100 rpm (8)
+    assert len(k.calls) < math.ceil(math.log2(20000.0 / 100.0)) and abs(rpm - k.first_opening()) <= 50.0
+    assert "standstill_cold+rated_cold+overspeed_cold" in basis
+
+
+def test_liftoff_search_definition_as_linear_path():
+    """Open at standstill -> 0, open at the lowest non-zero speed -> NaN, as on the linear path, with no
+    extra solve; no case -> NaN; only a closed standstill -> NaN (no speed scale)."""
+    k = Contact(p0=OPEN_AT_STANDSTILL)
+    shut = [("standstill_hot", 0.0, k.elems(0.0)), ("rated_hot", 20000.0, k.elems(20000.0))]
+    assert lc.liftoff_search(shut, k.solve, 100.0)[:2] == lc.liftoff_at_temperature(shut)
+    assert lc.liftoff_at_temperature(shut) == (0.0, "open at standstill_hot")
+    k2 = Contact()
+    high = [("rated_hot", 40000.0, k2.elems(40000.0)), ("overspeed_hot", 48000.0, k2.elems(48000.0))]
+    rpm, basis, _ = lc.liftoff_search(high, k2.solve, 100.0)
+    assert math.isnan(rpm) and basis == lc.liftoff_at_temperature(high)[1]
+    assert math.isnan(lc.liftoff_search([], k2.solve, 100.0)[0])
+    rpm, basis, _ = lc.liftoff_search([("standstill_cold", 0.0, k2.elems(0.0))], k2.solve, 100.0)
+    assert math.isnan(rpm) and "non-zero speed" in basis
+    assert k.calls == [] and k2.calls == []
+    with pytest.raises(ValueError, match="tolerance"):
+        lc.liftoff_search(k2.cases(), k2.solve, 0.0)
+
+
+def test_liftoff_search_bounded_and_failures():
+    k = Contact(d=QUARTIC)
+    k.f = np.array(SEXTIC)
+    rpm, basis, trials = lc.liftoff_search(k.cases(), k.solve, 1e-3, max_solves=2)
+    assert math.isnan(rpm) and len(k.calls) == 2 and "tolerance 0.001 rpm not reached" in basis
+    # a contact that never opens: trial speeds grow by SEARCH_GROWTH until the cap
+    never = Contact(c=[-1e-9] * 4)
+    speeds = (("standstill_cold", 0.0), ("rated_cold", 20000.0))
+    rpm, basis, trials = lc.liftoff_search(never.cases(speeds), never.solve, 100.0, max_solves=3)
+    assert math.isnan(rpm) and "still closed" in basis
+    assert never.calls == pytest.approx([30000.0, 45000.0, 67500.0])   # no finite extrapolation: 1.5 x
+    # a failing trial run: NaN with the reason, nothing raised
+
+    def boom(s):
+        raise RuntimeError("no convergence")
+
+    rpm, basis, trials = lc.liftoff_search(Contact(d=QUARTIC).cases(), boom, 100.0)
+    assert math.isnan(rpm) and "failed (RuntimeError: no convergence)" in basis and trials == []
+    # a trial run that succeeds but cannot be used (another contact mesh) is not reported as a failed run
+    def other_mesh(s):
+        el = never.elems(s)
+        el["elem"] = el["elem"] + 1000
+        return el
+
+    rpm, basis, trials = lc.liftoff_search(never.cases(speeds), other_mesh, 100.0)
+    assert math.isnan(rpm) and "different contact elements" in basis and "failed" not in basis
+    assert len(trials) == 1 and trials[0]["closed"] and "run at" not in basis
+
+
+def test_search_applies():
+    b = default_params("sleeved_bridgeless", mech_cases=ALL)
+    assert lc.search_applies(b) and lc.search_applies(default_params("sleeved_bridgeless"))
+    assert not lc.search_applies(b.replace(liftoff_search_tol=0.0))
+    assert not lc.search_applies(b.replace(mu_sleeve=0.2))
+    assert not lc.search_applies(default_params("sleeved_bridged", mech_cases=ALL))
+    with pytest.raises(ValueError, match="liftoff_search_tol"):
+        default_params("sleeved_bridgeless", liftoff_search_tol=-1.0)
+
+
+OPEN_AT_STANDSTILL = [0.0, 1.0, 5.0, 6.0]
+
+
+class FakeSingle:
+    """Stand-in for mapdl._solve_single: records the runs (folder, rpm, degC) and returns the synthetic
+    contact of the run's temperature (120 degC = hot)."""
+
+    def __init__(self, cold, hot):
+        self.runs, self.cold, self.hot = [], cold, hot
+
+    def __call__(self, q, cfg, wd, model, on_start=None, contact_elements=False, t0=None):
+        assert q.mech_cases == "" and contact_elements
+        self.runs.append((Path(wd).name, q.mech_rpm, q.mech_temperature))
+        k = self.hot if q.mech_temperature == 120.0 else self.cold
+        return _fake(0, _contact_elems=k.elems(q.mech_rpm))
+
+
+def _cases_point(monkeypatch, topo, cold=None, hot=None, force=None, **kw):
+    """solve_mech_cases of the six cases (hot = 120 degC) with the fake single-case solver."""
+    import sipm.mapdl as mp
+
+    fake = FakeSingle(cold or Contact(d=QUARTIC), hot or Contact(p0=OPEN_AT_STANDSTILL, d=QUARTIC))
+    monkeypatch.setattr(mp, "_solve_single", fake)
+    p = default_params(topo, **{"mech_temperature": 120.0, "mech_cases": ALL, **kw})
+    model = mp.mech_model_from_rotor(build_rotor(p))
+    return fake, p, mp.solve_mech_cases(p, Config(min_free_ram_gb=0), Path("unused"), model, liftoff_search=force)
+
+
+def test_solve_mech_cases_bridgeless_searches(monkeypatch, tmp_path):
+    fake, p, r = _cases_point(monkeypatch, "sleeved_bridgeless", mech_rpm=26000.0)
+    case_runs = [x for x in fake.runs if not x[0].startswith("liftoff_")]
+    extra = [x for x in fake.runs if x[0].startswith("liftoff_")]
+    assert [x[0] for x in case_runs] == list(MECH_CASES)
+    # cold: first opening near 29.5k rpm, bracketed by rated (closed, 26000) and overspeed (open, 31200);
+    # hot: open at standstill, no search
+    assert 26000 < fake.cold.first_opening() < 31200
+    assert extra and all(x[0].startswith("liftoff_cold_") and x[2] == 20.0 and 26000 < x[1] < 31200 for x in extra)
+    assert r["liftoff_rpm_hot"] == 0.0 and r["liftoff_basis_hot"] == "open at standstill_hot"
+    assert abs(r["liftoff_rpm_cold"] - fake.cold.first_opening()) <= p.liftoff_search_tol / 2
+    assert f"{len(extra)} extra solve(s)" in r["liftoff_basis_cold"]
+    assert [t["rpm"] for t in r["_liftoff_trials"]["cold"]] == [x[1] for x in extra]
+    assert r["_liftoff_trials"]["hot"] == []
+    # the per-case columns are those of the cases alone
+    assert r["contact_p_min__overspeed_cold"] == _fake(0)["contact_p_min"]
+    # equal temperatures: one search serves both labels
+    fake2, _, r2 = _cases_point(monkeypatch, "sleeved_bridgeless", hot=Contact(d=QUARTIC), mech_temperature_cold=120.0)
+    assert r2["liftoff_rpm_cold"] == r2["liftoff_rpm_hot"] and all(x[0].startswith("liftoff_cold_")
+                                                                    for x in fake2.runs if x[0].startswith("liftoff"))
+    # switched off: NaN with the not-linear reason, no extra run
+    fake3, _, r3 = _cases_point(monkeypatch, "sleeved_bridgeless", liftoff_search_tol=0.0)
+    assert len(fake3.runs) == 6 and math.isnan(r3["liftoff_rpm_cold"]) and "not linear" in r3["liftoff_basis_cold"]
+
+
+def test_solve_mech_cases_bridged_untouched(monkeypatch):
+    """The bridge-retained rotor: the six case runs only and the two-point values; forced on, the search
+    runs and agrees with them within its tolerance where the contact is linear."""
+    fake, p, r = _cases_point(monkeypatch, "sleeved_bridged", hot=Contact(p0=[x + 2 for x in P0], d=QUARTIC))
+    assert [x[0] for x in fake.runs] == list(MECH_CASES) and "_liftoff_trials" not in r
+    assert r["liftoff_basis_cold"].startswith("standstill_cold+overspeed_cold")   # two-point line, flagged
+    expect = lc.liftoff_outputs(p, {c: {"_contact_elems": (fake.hot if t == 120.0 else fake.cold).elems(s)}
+                                    for c in MECH_CASES for s, t in [p.case_speed_temperature(c)]})
+    assert {k: r[k] for k in expect} == expect
+    fake4, p4, r4 = _cases_point(monkeypatch, "sleeved_bridged", cold=Contact(), hot=Contact(p0=[x + 2 for x in P0]),
+                                 force=True)
+    assert any(x[0].startswith("liftoff_") for x in fake4.runs)
+    assert abs(r4["liftoff_rpm_cold"] - math.sqrt(5.0 / 4.0e-9)) <= p4.liftoff_search_tol
+    assert "found by iteration" in r4["liftoff_basis_cold"]
+
+
+# ---- cache: solver rules without a key change -----------------------------------------------
+def test_point_rules():
+    from sipm.sweep import RULE_BORE_ARC as B
+    from sipm.sweep import RULE_LIFTOFF_SEARCH as S
+    from sipm.sweep import point_rules
+
+    bd, bl = default_params("sleeved_bridged"), default_params("sleeved_bridgeless")
+    for phys in ("em", "acloss"):
+        assert point_rules(bd.replace(sleeve_thickness=1.0), phys) == point_rules(bl, phys) == ()
+    assert point_rules(bd, "mech") == () and point_rules(bd.replace(sleeve_thickness=2.0), "mech") == ()
+    assert point_rules(bd.replace(mech_cases=ALL), "mech") == ()
+    assert point_rules(bd.replace(sleeve_thickness=1.0), "mech") == (B,)
+    assert point_rules(bd.replace(mech_mesh=0.8), "mech") == (B,)
+    assert point_rules(bl, "mech") == (B,)
+    assert point_rules(bl.replace(mech_cases=ALL), "mech") == (B, S)
+    assert point_rules(bl.replace(sleeve_thickness=1.5, mech_cases=ALL), "mech") == (S,)
+    assert point_rules(bl.replace(sleeve_thickness=1.5, mech_cases=ALL, liftoff_search_tol=0.0), "mech") == ()
+    layered = bd.replace(sleeve_thickness=1.0, sleeve_fibre="carbon_sm", sleeve_layers="0:1,30:1")
+    assert point_rules(layered, "mech") == ()
+
+
+def test_sample_table_keys_unchanged():
+    """The published sweep's keys (examples/data, written by the first release) are the keys of today,
+    for the thin-sleeve points the bore-arc rule changed as for the others."""
+    df = pd.read_csv(Path(__file__).parents[1] / "examples/data/sample_mech_results.csv")
+    for _, row in df.iterrows():
+        p = resolve({"sleeve_thickness": row["sleeve_thickness"], "interference": row["interference"]},
+                    topology="sleeved_bridged")
+        assert point_key(p, "mech") == row["key"]
+    assert point_key(resolve({"sleeve_thickness": 1.0, "interference": 0.0}), "mech") == "25eaaf4afeddc5da"
+
+
+class CountingSolver:
+    def __init__(self):
+        self.n = 0
+
+    def __call__(self, p, wd):
+        self.n += 1
+        return dict(svm_rotor_max=100.0 + self.n)
+
+
+def test_stale_cache_records_are_resolved(tmp_path):
+    """A cached record of a point a rule applies to, written without the rule (earlier code), is solved
+    again under the same key; records of other points, and records that list the rule, are reused."""
+    cfg = Config(workdir=tmp_path, min_free_ram_gb=0)
+    rows = [{"sleeve_thickness": 1.0}, {"sleeve_thickness": 1.5}]
+    sw = Sweep("st", "mech", rows, topology="sleeved_bridged", cfg=cfg)
+    s1 = CountingSolver()
+    sw.run(solver=s1, progress=None)
+    assert s1.n == 2
+    plan = sw.plan()
+    thin, thick = (sw._cache_path(plan[i][3]) for i in (0, 1))
+    assert json.loads(thin.read_text())["rules"] == ["bore-arc-mesh"]
+    assert "rules" not in json.loads(thick.read_text())          # an unaffected record is as before
+    s2 = CountingSolver()
+    sw.run(solver=s2, progress=None)
+    assert s2.n == 0                                               # both current
+    # simulate the caches of the earlier code: no rules in the records
+    for f in (thin, thick):
+        rec = json.loads(f.read_text())
+        rec.pop("rules", None)
+        f.write_text(json.dumps(rec))
+    df = sw.results()
+    assert list(df["status"]) == ["pending", "ok"] and "bore-arc-mesh" in df["message"].iloc[0]
+    s3 = CountingSolver()
+    df = sw.run(solver=s3, progress=None)
+    assert s3.n == 1 and list(df["status"]) == ["ok", "ok"]        # only the thin sleeve was re-solved
+    assert [p[3] for p in sw.plan()] == [p[3] for p in plan]       # under the same keys
+    assert json.loads(thin.read_text())["rules"] == ["bore-arc-mesh"]
+
+
+class FailingSolver(CountingSolver):
+    def __call__(self, p, wd):
+        self.n += 1
+        raise RuntimeError("no convergence")
+
+
+def test_failed_records_and_rules(tmp_path):
+    """A failure written under the rule is kept like any failure (re-run only with retry_failed);
+    a failure written by earlier code (no rule in the record) is solved again once."""
+    cfg = Config(workdir=tmp_path, min_free_ram_gb=0)
+    sw = Sweep("fail", "mech", [{"sleeve_thickness": 1.0}], topology="sleeved_bridged", cfg=cfg)
+    f = FailingSolver()
+    df = sw.run(solver=f, progress=None)
+    assert f.n == 1 and list(df["status"]) == ["failed"]
+    rec_path = sw._cache_path(sw.plan()[0][3])
+    assert json.loads(rec_path.read_text())["rules"] == ["bore-arc-mesh"]
+    f2 = FailingSolver()
+    assert list(sw.run(solver=f2, progress=None)["status"]) == ["failed"] and f2.n == 0   # not endlessly re-solved
+    rec = json.loads(rec_path.read_text())
+    rec.pop("rules")
+    rec_path.write_text(json.dumps(rec))
+    s = CountingSolver()
+    assert list(sw.run(solver=s, progress=None)["status"]) == ["ok"] and s.n == 1
+    f3 = FailingSolver()
+    sw.run(solver=f3, progress=None, retry_failed=True)
+    assert f3.n == 0                                               # ok and current: kept
+
+
+def test_point_rules_build_no_geometry(monkeypatch):
+    """point_rules runs for every cached point on every run and results(): parameters only, so a point
+    whose model would raise (it fails in its own run) cannot stop the sweep there."""
+    import sipm.geometry
+    import sipm.mapdl
+    import sipm.sweep as sweep
+
+    def boom(*a, **k):
+        raise AssertionError("geometry built")
+
+    for mod, name in ((sweep, "build_rotor"), (sipm.geometry, "build_rotor"), (sipm.mapdl, "build_rotor"),
+                      (sipm.mapdl, "mech_model_from_rotor")):
+        if hasattr(mod, name):
+            monkeypatch.setattr(mod, name, boom)
+    assert sweep.point_rules(default_params("sleeved_bridged", sleeve_thickness=1.0), "mech") == (sweep.RULE_BORE_ARC,)
+    assert sweep.point_rules(default_params("sleeved_bridgeless", mech_cases=ALL), "mech") == (
+        sweep.RULE_BORE_ARC, sweep.RULE_LIFTOFF_SEARCH)
 
 
 # ---- closed-form lift-off -------------------------------------------------------------------

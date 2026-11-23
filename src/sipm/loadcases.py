@@ -13,13 +13,15 @@ Columns written for a point with ``mech_cases`` set:
   :data:`ENVELOPE`; ties go to the earlier case of :data:`sipm.params.MECH_CASES`, so the
   envelope does not depend on the order of the list;
 * ``liftoff_rpm_cold`` / ``liftoff_rpm_hot`` with ``liftoff_basis_cold`` / ``_hot`` (the two
-  cases used, or why there is no value): see :func:`liftoff_at_temperature`.
+  cases used, or why there is no value): see :func:`liftoff_at_temperature`; for a rotor whose
+  contact is not linear in speed (:func:`search_applies`) the value comes from
+  :func:`liftoff_search`, run by the solver with extra solutions at trial speeds.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 import numpy as np
 
@@ -204,6 +206,186 @@ def liftoff_at_temperature(entries: Sequence[tuple[str, float, Mapping[str, np.n
     return rpm, basis
 
 
+# ----------------------------------------------------------------------------- lift-off by search
+SEARCH_MAX_SOLVES = 12   # extra MAPDL runs per temperature, upper bound of liftoff_search
+SEARCH_GROWTH = 1.5      # factor between trial speeds while no bracket exists above the solved cases
+
+
+def search_applies(p: Params) -> bool:
+    """Whether the lift-off speed of ``p`` is found by :func:`liftoff_search` (extra MAPDL runs)
+    instead of the two-point extrapolation: a rotor of :data:`NOT_LINEAR_TOPOLOGIES` with
+    frictionless sleeve contact and bonded magnets (as the linear path requires; with friction the
+    columns stay NaN) and ``liftoff_search_tol`` > 0."""
+    return (p.topology in NOT_LINEAR_TOPOLOGIES and p.mu_sleeve == 0 and p.magnet_contact == "bonded"
+            and p.liftoff_search_tol > 0)
+
+
+def _rows(entries):
+    """(name, rpm, elems) sorted by speed (then canonical case order), one per speed."""
+    rows, seen = [], set()
+    for name, rpm, el in sorted(entries, key=lambda t: (t[1], MECH_CASES.index(t[0]) if t[0] in MECH_CASES else 0)):
+        if rpm not in seen:
+            seen.add(rpm)
+            rows.append((name, float(rpm), el))
+    return rows
+
+
+def _quadratic_zero(points) -> float:
+    """Lowest speed above the fastest of three closed solutions ``[(s, elems), ...]`` (ascending)
+    at which an element's pressure, taken as quadratic in s^2 through its three values, reaches
+    zero (the curvature of a contact that is not linear in speed; inf if none falls to zero)."""
+    (s0, e0), (s1, e1), (s2, e2) = points
+    if np.any(e0["elem"] != e2["elem"]) or np.any(e1["elem"] != e2["elem"]):
+        return math.nan
+    u0, u1, u2 = s0 * s0, s1 * s1, s2 * s2
+    p0, p1, p2 = (np.asarray(e["pres"], float) for e in (e0, e1, e2))
+    f01, f12 = (p1 - p0) / (u1 - u0), (p2 - p1) / (u2 - u1)
+    a = (f12 - f01) / (u2 - u0)
+    # Newton form p(u) = p2 + f12 (u - u2) + a (u - u2)(u - u1); in v = u - u2: p = c + bb v + a v^2
+    c, bb = p2, f12 + a * (u2 - u1)
+    roots = np.full(len(c), np.inf)
+    du = u2 - u0
+    lin = np.abs(a) * du * du <= 1e-9 * (np.abs(bb) * du + np.abs(c))
+    m = lin & (bb < 0)
+    roots[m] = -c[m] / bb[m]
+    disc = bb * bb - 4 * a * c
+    q = ~lin & (disc >= 0)
+    sq = np.sqrt(np.where(q, disc, 0.0))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        r1, r2 = (-bb - sq) / (2 * a), (-bb + sq) / (2 * a)
+    for r in (r1, r2):
+        ok = q & (r > 0)
+        roots[ok] = np.minimum(roots[ok], r[ok])
+    v = float(np.min(roots))
+    return math.sqrt(u2 + v) if math.isfinite(v) else math.inf
+
+
+def pressure_closed(elems: Mapping[str, np.ndarray]) -> bool:
+    """Every sleeve contact element carries a positive contact pressure (``CONT,PRES`` > 0): the
+    lift-off criterion of the two-point line (an element's pressure reaching zero), whatever the
+    contact status of the element's integration points."""
+    return bool(len(elems["pres"]) and np.all(np.asarray(elems["pres"], float) > 0))
+
+
+def liftoff_search(entries: Sequence[tuple[str, float, Mapping[str, np.ndarray]]],
+                   solve: Callable[[float], Mapping[str, np.ndarray]], tol: float,
+                   max_solves: int = SEARCH_MAX_SOLVES) -> tuple[float, str, list[dict]]:
+    """Lift-off speed (rpm) at one temperature, found directly with extra solves.
+
+    The definition is that of the two-point line (:func:`liftoff_from_elements`): the lowest speed
+    at which a contact element's pressure reaches zero (:func:`pressure_closed` turns false). Here
+    it is bracketed and narrowed with solutions at trial speeds instead of read off a line, for
+    contacts that are not linear in speed.
+
+    ``entries`` as for :func:`liftoff_at_temperature` (the solved load cases at this temperature);
+    ``solve(rpm)`` runs one more solution at that speed and temperature and returns its contact
+    element arrays (it may raise; the search then stops with NaN). Rules:
+
+    * the lowest-speed case not :func:`fully_closed`: 0 at standstill, NaN otherwise, exactly as on
+      the linear path (no solves);
+    * bracket: the solved speeds are walked upwards; ``lo`` is the last of the run of speeds with
+      positive pressure everywhere from the lowest, ``hi`` the first speed after it where an
+      element's pressure is zero. With only a closed standstill case there is no speed scale: NaN;
+    * trial speeds: from the estimate ``est``, the element-by-element two-point extrapolation
+      through the two fastest closed solutions known so far (locally accurate however non-linear
+      the contact is over the whole range): ``est + 0.45 tol``, so that a good estimate is
+      overshot by less than half the tolerance, and, once a zero-pressure speed ``hi`` lies within
+      ``tol`` above it, ``est - 0.45 tol``, which closes the bracket; bisection when the estimate
+      lies outside the bracket or the bracket did not halve over the last three trials; without
+      an estimate and no zero-pressure speed yet, :data:`SEARCH_GROWTH` x the fastest closed
+      speed;
+    * stop when ``hi - lo <= tol``; the result is the midpoint, within ``tol / 2`` of the lift-off
+      speed as resolved by the trials.
+
+    At most ``max_solves`` extra solves; if the tolerance is not reached within them the result is
+    NaN, with the last bracket in the basis. Like the two-point line, the search assumes one
+    transition from closed to open in [lo, hi]; an opening that closes again between two closed
+    speeds would not be seen. Returns (rpm, basis, trials), trials = one dict per extra solve
+    (rpm, closed = :func:`pressure_closed`, p_min, n_open = elements with zero pressure or an
+    open status)."""
+    rows = _rows(entries)
+    trials: list[dict] = []
+    if not rows:
+        return math.nan, "no case at this temperature", trials
+    name0, rpm0, el0 = rows[0]
+    if not fully_closed(el0):
+        if rpm0 == 0:
+            return 0.0, f"open at {name0}", trials
+        return math.nan, f"open at {name0}, the lowest solved speed", trials
+    if not tol > 0:
+        raise ValueError(f"lift-off search tolerance must be > 0 rpm, got {tol}")
+    closed = [(rpm0, el0)]   # solutions with positive pressure everywhere, by speed
+    hi = None
+    for _name, rpm, el in rows[1:]:
+        if pressure_closed(el):
+            closed.append((rpm, el))
+        else:
+            hi = rpm
+            break
+    trying = [math.nan]   # speed of the solve in progress (for the message if it fails)
+
+    def trial(s: float) -> bool:
+        trying[0] = s
+        el = solve(s)
+        trying[0] = math.nan   # the run itself succeeded; a later error is not its failure
+        ok = pressure_closed(el)
+        pres, st = np.asarray(el["pres"], float), np.asarray(el["status"], float)
+        trials.append(dict(rpm=s, closed=ok, p_min=float(pres.min()) if len(pres) else math.nan,
+                           n_open=int(np.sum((st < CLOSED_STATUS) | (pres <= 0)))))
+        if ok:
+            closed.append((s, el))
+            closed.sort(key=lambda t: t[0])
+        return ok
+
+    def estimate() -> float:
+        if len(closed) < 2:
+            return math.nan
+        (s1, e1), (s2, e2) = closed[-2], closed[-1]
+        s, _ = liftoff_from_elements(s1, e1, s2, e2)   # also checks that the meshes agree
+        if len(closed) >= 3:
+            q = _quadratic_zero(closed[-3:])
+            if math.isfinite(q) and q > s2:
+                return q
+        return s
+
+    def stopped(why: str) -> tuple[float, str, list[dict]]:
+        return math.nan, f"not found: search stopped after {len(trials)} extra solve(s), {why}", trials
+
+    widths: list[float] = []
+    try:
+        if hi is None and closed[-1][0] == 0:
+            return math.nan, "needs a case with closed contact at a non-zero speed", trials
+        while hi is None or hi - closed[-1][0] > tol:
+            lo = closed[-1][0]
+            if len(trials) >= max_solves:
+                return stopped(f"still closed at {lo:.1f} rpm" if hi is None else
+                               f"closed at {lo:.1f}, zero pressure at {hi:.1f} rpm, tolerance {tol:g} rpm not reached")
+            est = estimate()
+            if hi is None:
+                s = est + 0.45 * tol if math.isfinite(est) and est > lo else SEARCH_GROWTH * lo
+                s = max(s, lo + tol)
+            else:
+                widths.append(hi - lo)
+                stalled = len(widths) >= 4 and widths[-1] > 0.5 * widths[-4]
+                if stalled or not (math.isfinite(est) and lo < est < hi):
+                    s = 0.5 * (lo + hi)
+                elif hi - est <= tol:     # zero pressure just above the estimate: close the bracket below it
+                    s = max(est - 0.45 * tol, lo + 0.05 * tol)
+                else:                     # aim just beyond the estimate, so that a good one ends the search
+                    s = min(est + 0.45 * tol, hi - 0.05 * tol)
+            if not trial(s):
+                hi = s if hi is None else min(hi, s)
+    except Exception as e:   # a failed trial run (or an inconsistent one): no value, the point itself stands
+        if math.isnan(trying[0]):
+            return stopped(f"{type(e).__name__}: {e}")
+        return stopped(f"the run at {trying[0]:.1f} rpm failed ({type(e).__name__}: {e})")
+    lo = closed[-1][0]
+    basis = (f"found by iteration: pressure positive at {lo:.1f} rpm, zero at {hi:.1f} rpm, from the cases "
+             f"{'+'.join(r[0] for r in rows)} and {len(trials)} extra solve(s) at trial speeds (tolerance "
+             f"{tol:g} rpm)")
+    return 0.5 * (lo + hi), basis, trials
+
+
 def nonlinear_reason(p: Params) -> str:
     """Why the closed-contact model is not linear in the loads ('' if it is): the lift-off
     extrapolation needs frictionless sleeve contact and bonded magnets, and a rotor whose contact
@@ -218,32 +400,46 @@ def nonlinear_reason(p: Params) -> str:
     return ", ".join(why)
 
 
-def liftoff_outputs(p: Params, results: Mapping[str, Mapping]) -> dict:
+def liftoff_entries(p: Params, results: Mapping[str, Mapping], temperature: float) -> list:
+    """(case, rpm, contact element arrays) of the cases solved at ``temperature``, whatever their label."""
+    entries = []
+    for case, r in results.items():
+        rpm_c, t_c = p.case_speed_temperature(case)
+        if t_c == temperature and "_contact_elems" in r:
+            entries.append((case, rpm_c, r["_contact_elems"]))
+    return entries
+
+
+def liftoff_outputs(p: Params, results: Mapping[str, Mapping], searched: Mapping[str, tuple] | None = None) -> dict:
     """``liftoff_rpm_cold`` / ``_hot`` and their ``liftoff_basis_*`` from the per-case results
     (each with ``_contact_elems``). The cases at the temperature of the label are used, whatever
-    their own label: with mech_temperature = mech_temperature_cold both use all cases."""
+    their own label: with mech_temperature = mech_temperature_cold both use all cases.
+
+    ``searched`` (label -> (rpm, basis), from :func:`liftoff_search`, see
+    :func:`sipm.mapdl.solve_mech_cases`) gives the values of a label directly; it is used for
+    the labels it has and only for them, and only the solver passes it (for :func:`search_applies`
+    points or when the search is forced)."""
     out = {}
     why = nonlinear_reason(p)
     for label, temp in (("cold", p.mech_temperature_cold), ("hot", p.mech_temperature)):
-        if why:
+        if searched and label in searched:
+            rpm, basis = searched[label]
+        elif why:
             rpm, basis = math.nan, f"not computed: model not linear ({why})"
         else:
-            entries = []
-            for case, r in results.items():
-                rpm_c, t_c = p.case_speed_temperature(case)
-                if t_c == temp and "_contact_elems" in r:
-                    entries.append((case, rpm_c, r["_contact_elems"]))
-            rpm, basis = liftoff_at_temperature(entries)
+            rpm, basis = liftoff_at_temperature(liftoff_entries(p, results, temp))
         out[f"liftoff_rpm_{label}"] = rpm
         out[f"liftoff_basis_{label}"] = basis
     return out
 
 
-def combine(p: Params, results: Mapping[str, Mapping], wall_s: float | None = None) -> dict:
+def combine(p: Params, results: Mapping[str, Mapping], wall_s: float | None = None,
+            searched: Mapping[str, tuple] | None = None) -> dict:
     """One flat result dict for a point from its per-case result dicts (case -> dict).
 
     Un-suffixed columns from :func:`base_case` (named in ``mech_case``), every public output of
-    every case as ``<output>__<case>``, the :func:`envelope` and the :func:`liftoff_outputs`.
+    every case as ``<output>__<case>``, the :func:`envelope` and the :func:`liftoff_outputs`
+    (``searched``: lift-off values found by :func:`liftoff_search`, passed on to it).
     ``mech_wall_s`` becomes ``wall_s`` (the whole point) if given. Private entries: ``_raw``,
     ``_sleeve_nodes``, ``_contact_elems`` of the base case and ``_cases`` (all per-case dicts)."""
     cases = p.mech_case_list
@@ -257,7 +453,7 @@ def combine(p: Params, results: Mapping[str, Mapping], wall_s: float | None = No
         out.update({case_column(k, case): v for k, v in results[case].items() if not k.startswith("_")})
     out.update(envelope({c: results[c] for c in cases}))
     if any("_contact_elems" in results[c] for c in cases):
-        out.update(liftoff_outputs(p, {c: results[c] for c in cases}))
+        out.update(liftoff_outputs(p, {c: results[c] for c in cases}, searched))
     if wall_s is not None:
         out["mech_wall_s"] = wall_s
     for k in ("_raw", "_sleeve_nodes", "_contact_elems"):
@@ -268,6 +464,6 @@ def combine(p: Params, results: Mapping[str, Mapping], wall_s: float | None = No
 
 
 __all__ = ["ENVELOPE", "case_column", "worst_column", "worst_case_column", "base_case", "canonical", "envelope",
-           "fully_closed", "liftoff_from_elements", "linearity_deviation",
-           "liftoff_at_temperature", "liftoff_outputs", "nonlinear_reason",
-           "combine"]
+           "fully_closed", "pressure_closed", "liftoff_from_elements", "linearity_deviation",
+           "liftoff_at_temperature", "liftoff_outputs", "liftoff_entries", "nonlinear_reason",
+           "search_applies", "liftoff_search", "combine"]

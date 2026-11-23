@@ -4,16 +4,54 @@
 
 ### Review fixes
 
-* **Bridgeless deck: contact target meshed like the lamination.** With the bridgeless rotor's
-  thin default sleeve (0.5 mm) the sleeve area size (thickness / 3) made the bore arc, the target
-  of the sleeve contact, finer than the lamination OD; it is now sized `mech_mesh`, as for a
-  layered sleeve (only when the area size is finer, and only for `sleeved_bridgeless`). The
+* **Thin sleeves: contact target meshed like the lamination.** With a single-layer sleeve thinner
+  than 3 x `mech_mesh` (the bridgeless rotor's default 0.5 mm sleeve, a 1.0 mm bridge-retained
+  sleeve, or the 1.5 mm default at a 0.8 mm mesh) the sleeve area size (thickness / 3) made the
+  bore arc, the target of the sleeve contact, finer than the lamination OD; it is now sized
+  `mech_mesh`, as for a layered sleeve, on both rotors (only when the area size is finer; a sleeve
+  exactly 3 x `mech_mesh` thick counts as equal within a relative 1e-9, so rounding of the
+  thickness, e.g. 2.1 mm read as 2.0999999999999943 mm, does not decide). The
   bridgeless default deck changes by that one line (pinned hash updated); headline, global and
   magnet peaks move by < 0.01 MPa, sleeve hoop 236.6 to 236.5 MPa, lips by up to 0.4 MPa,
-  `tau_sleeve_max` 6.0 to 3.8 MPa (docs/validation.md sections 2, 3, 11). Bridge-retained decks
-  are byte-identical. The point key does not change, so bridgeless mech points with such a thin
-  sleeve cached by an earlier version are reused with their earlier results; use a new sweep
-  name to re-solve them.
+  `tau_sleeve_max` 6.0 to 3.8 MPa (docs/validation.md sections 2, 3, 11). The default
+  bridge-retained deck (1.5 mm sleeve, 0.5 mm mesh: equal sizes) is byte-identical (pinned hash
+  unchanged). Re-solved: the 1.0 mm rows of `examples/data/sample_mech_results.csv` and of
+  docs/validation.md section 7 (section peaks within 0.03 MPa, sleeve hoop within 0.2 MPa, most
+  compressive sleeve radial stress up to 12 %, peak contact pressure up to 3.4 %; the 1.5 and
+  2.0 mm rows re-solved bit-identical), `docs/img/stress_map.png`, and the 0.8 mm bridge-retained
+  row of the mesh study (section 3: `bridge2` 97.4 to 97.3, sleeve hoop 222.9 to 222.6 MPa).
+* **Cached points changed by a solver rule are re-solved.** The point key cannot see a change of
+  the deck rules, so cached thin-sleeve mech points (and bridgeless load-case points, now with a
+  lift-off value) would have been reused with their earlier results. `sipm.sweep.point_rules`
+  names the rules that apply to a point (`bore-arc-mesh`, `liftoff-search`); the cache record of
+  such a point lists them, and a cached record without them is solved again under the same key
+  (`results()` shows it as `pending` until then). Keys are unchanged for every point (pinned
+  default keys and the keys of `examples/data/sample_mech_results.csv`), and points no rule
+  applies to (every EM point, the default bridge-retained mech point, sleeves at least
+  3 x `mech_mesh` thick, layered sleeves) keep their records and reuse. The rules are decided
+  from the parameters alone (no geometry is built for a cached point). A failure written under the
+  rules is kept like any failure (`retry_failed` re-runs it).
+* **Bridgeless lift-off speed by search.** `liftoff_rpm_cold` / `_hot` of `sleeved_bridgeless`
+  were NaN (contact not linear in speed). They are now found directly with the definition of the
+  line (lowest speed at which an element's contact pressure reaches zero; open at standstill = 0):
+  bracket from the solved cases, extra single-case MAPDL runs at trial speeds placed from the
+  local extrapolation through the closed solutions (bisection as fallback) until the bracket is at
+  most `liftoff_search_tol` wide (new parameter, 100 rpm, out of the point key and the EM key at
+  its default; 0 = no search, NaN as before), at most 12 extra runs per temperature; the basis
+  says "found by iteration" with the bracket, the cases and the number of extra runs. Default
+  bridgeless rotor: 24 414 rpm cold (2 extra runs; the old line gave 23 591 rpm, where the
+  pressure was still positive), 0 hot (open at standstill). Forced on the bridge-retained rotor
+  it gives 39 512 rpm against the line's 39 357 rpm (+0.39 %, within the line's 0.5 % accuracy;
+  docs/validation.md section 11). The bridge-retained rotor keeps the two-point extrapolation
+  (same runs, same values, same decks); `solve_mech_cases(..., liftoff_search=True/False)`
+  forces the search on or off.
+* **Open-circuit and no-load field runs model the sleeve non-conducting** (as `ac_loss`): they
+  start from a static field, so a conducting sleeve added its eddy start-up transient. With
+  1e4 S/m axial the bridge-retained open-circuit EMF is the non-conducting 99.240 / 99.239 /
+  99.244 V. Offline tests with a recording session for these runs and for `ac_loss`.
+* README "Proposed next": the entries on 3D sleeve eddy loss, axial effects, more detailed
+  temperature, 3D failure criteria and calibration were removed (out of scope); the limits in
+  section 6 stay.
 * **`sipm validate sleeve-loss`** (`sipm.validation.sleeve_loss_check`): the FE sleeve loss against
   the thin-shell estimate of docs/validation.md section 13 from the package (re-run: 0.9929).
 * `MaxwellSession.ac_loss` models the sleeve non-conducting, so a conducting sleeve's loss is

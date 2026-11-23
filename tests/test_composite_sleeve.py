@@ -27,7 +27,8 @@ THERMAL_FIELDS = ("lam_cte", "pm_cte", "sleeve_cte_hoop", "sleeve_cte_radial", "
                   "mech_temperature", "mech_ref_temperature")
 LOAD_CASE_FIELDS = ("mech_cases", "overspeed_factor", "mech_temperature_cold")   # tests/test_load_cases.py
 LAYER_FIELDS = ("sleeve_layers", "sleeve_layer_prestress")   # tests/test_multilayer_sleeve.py
-NEW_FIELDS = THERMAL_FIELDS + SPEC_FIELDS + STRENGTH_FIELDS + LOAD_CASE_FIELDS + LAYER_FIELDS
+LIFTOFF_FIELDS = ("liftoff_search_tol",)   # tests/test_load_cases.py
+NEW_FIELDS = THERMAL_FIELDS + SPEC_FIELDS + STRENGTH_FIELDS + LOAD_CASE_FIELDS + LAYER_FIELDS + LIFTOFF_FIELDS
 # EM fields (not mechanical-only), also omitted from the point key at default: tests/test_sleeve_eddy.py
 SIGMA_FIELDS = ("sleeve_sigma_fibre", "sleeve_sigma_transverse")
 

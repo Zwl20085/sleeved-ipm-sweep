@@ -4,7 +4,8 @@
   physics; its result (or failure) is written atomically to
   ``<workdir>/<name>/cache/<key>.json`` as soon as it finishes;
 * re-running the same sweep skips cached points, so an interrupted sweep resumes
-  where it stopped (failed points are kept as failures unless ``retry_failed``);
+  where it stopped (failed points are kept as failures unless ``retry_failed``); a cached
+  point that a later solver rule changed (:func:`point_rules`) is solved again;
 * invalid designs (parameter or geometry errors) and solver failures are recorded
   with their message and never stop the sweep;
 * EM points that share a Maxwell model (same parameters apart from ``gamma`` and
@@ -32,7 +33,7 @@ from .params import Params, coerce, default_params, field_names
 
 CACHE_SCHEMA = 1
 # private solver outputs kept out of the point cache (raw solver keys, per-node arrays)
-NOT_CACHED = {"_raw", "_sleeve_nodes", "_contact_elems", "_cases"}
+NOT_CACHED = {"_raw", "_sleeve_nodes", "_contact_elems", "_cases", "_liftoff_trials"}
 
 
 def grid(**axes: Iterable) -> list[dict[str, Any]]:
@@ -42,11 +43,13 @@ def grid(**axes: Iterable) -> list[dict[str, Any]]:
 
 
 # Parameters added after the cache format was fixed (thermal load case, composite sleeve and
-# its strengths, load-case set, layered sleeve and winding prestress, sleeve conductivity). Each is left out of the
+# its strengths, load-case set, layered sleeve and winding prestress, sleeve conductivity, lift-off
+# search tolerance). Each is left out of the
 # point key while it sits at its default, so a point that does not use the new features hashes
 # exactly as before and caches written by earlier
 # versions stay valid. Such old cached mech points lack the new output columns (sleeve failure
-# indices, sr_sleeve_max, tau_sleeve_max); re-run with a fresh sweep name to get them.
+# indices, sr_sleeve_max, tau_sleeve_max); re-run with a fresh sweep name to get them. Results that
+# changed without a parameter (a solver rule) are handled by point_rules below, not by the key.
 # A field added in future belongs here too.
 KEY_OMITTED_AT_DEFAULT = (
     "lam_cte", "pm_cte", "sleeve_cte_hoop", "sleeve_cte_radial", "sleeve_cte_axial",
@@ -56,6 +59,7 @@ KEY_OMITTED_AT_DEFAULT = (
     "mech_cases", "overspeed_factor", "mech_temperature_cold",
     "sleeve_layers", "sleeve_layer_prestress",
     "sleeve_sigma_fibre", "sleeve_sigma_transverse",
+    "liftoff_search_tol",
 )
 _FIELD_DEFAULTS = {f.name: f.default for f in dataclasses.fields(Params)}
 
@@ -65,6 +69,39 @@ def point_key(p: Params, physics: str) -> str:
          if not (k in KEY_OMITTED_AT_DEFAULT and v == _FIELD_DEFAULTS[k])}
     s = json.dumps(dict(p=d, physics=physics, schema=CACHE_SCHEMA), sort_keys=True)
     return hashlib.sha1(s.encode()).hexdigest()[:16]
+
+
+# Solver rules that changed the result of some points after their key format was fixed, without a
+# parameter to put in the key. A point a rule applies to is solved under it and its cache record lists
+# the rule (``rules``); a cached record of such a point that does not list it was written by earlier
+# code and is solved again (same key, same file). Points no rule applies to are untouched: their key,
+# their record and its reuse are as before. Rule names are never reused.
+RULE_BORE_ARC = "bore-arc-mesh"        # single-layer sleeve thinner than 3 x mech_mesh (docs/methods.md, 3)
+RULE_LIFTOFF_SEARCH = "liftoff-search"   # lift-off found by iteration (sipm.loadcases.search_applies)
+
+
+def point_rules(p: Params, physics: str) -> tuple[str, ...]:
+    """The rules of :data:`RULE_BORE_ARC` / :data:`RULE_LIFTOFF_SEARCH` that apply to the point
+    (``()`` for most points: every EM point, every mech point with a sleeve at least 3 x
+    ``mech_mesh`` thick or a layered sleeve, and no lift-off search). From the parameters alone:
+    no geometry is built, so it is cheap and cannot raise for a point whose model would fail (that
+    point fails in its own run, as before)."""
+    if physics != "mech":
+        return ()
+    from .loadcases import search_applies
+    from .mapdl import bore_arc_rule
+
+    rules = []
+    if bore_arc_rule(p):
+        rules.append(RULE_BORE_ARC)
+    if p.mech_cases and search_applies(p):
+        rules.append(RULE_LIFTOFF_SEARCH)
+    return tuple(rules)
+
+
+def is_current(record: dict | None, rules: Iterable[str]) -> bool:
+    """A cache record is current if it exists and lists every rule that applies to its point."""
+    return record is not None and set(rules) <= set(record.get("rules", ()))
 
 
 def _atomic_write_json(path: Path, obj) -> None:
@@ -177,8 +214,9 @@ class Sweep:
             if err is not None:
                 continue
             c = self.load_cached(key)
-            if c is None or (retry_failed and c.get("status") != "ok"):
-                todo.append((i, row, p, key))
+            rules = point_rules(p, self.physics)
+            if not is_current(c, rules) or (retry_failed and c.get("status") != "ok"):
+                todo.append((i, row, p, key, rules))
         if self.physics in ("em", "acloss"):
             from .maxwell import em_model_key
 
@@ -188,7 +226,7 @@ class Sweep:
         solved = 0
         ctx = solver or _default_solver(self.physics, self.cfg)
         try:
-            for i, row, p, key in todo:
+            for i, row, p, key, rules in todo:
                 if stop_after is not None and solved >= stop_after:
                     log(f"[{self.name}] stopping after {solved} new points (stop_after)")
                     break
@@ -203,6 +241,8 @@ class Sweep:
                 t0 = time.time()
                 rec = dict(key=key, index=i, physics=self.physics, inputs=row, params=p.to_dict(),
                            started=time.strftime("%Y-%m-%d %H:%M:%S"), free_ram_gb_at_start=free)
+                if rules:   # written only where a rule applies: every other record is as before
+                    rec["rules"] = list(rules)
                 wd = make_wd(getattr(ctx, "pids", lambda: []))
                 with wd:
                     try:
@@ -247,8 +287,13 @@ class Sweep:
                 r.update(status="invalid", message=err)
             else:
                 c = self.load_cached(key)
+                rules = point_rules(p, self.physics)
                 if c is None:
                     r.update(status="pending", message="")
+                elif not is_current(c, rules):
+                    missing = sorted(set(rules) - set(c.get("rules", ())))
+                    r.update(status="pending", message=f"cached result predates solver rule(s) {', '.join(missing)}; "
+                                                       "run the sweep again to re-solve it")
                 else:
                     r.update(c.get("outputs", {}))
                     r.update(status=c["status"], message=c.get("message", ""), wall_s=c.get("wall_s"))

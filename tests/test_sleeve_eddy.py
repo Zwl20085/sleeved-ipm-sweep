@@ -363,6 +363,59 @@ def test_non_conducting_run_unchanged_and_zero_axial():
     assert r2["torque_avg"] == pytest.approx(r["torque_avg"])
 
 
+class _RecordingSession(mx.MaxwellSession):
+    """MaxwellSession whose model build only records the parameters; AEDT is a MagicMock."""
+
+    def __init__(self):
+        super().__init__()
+        self.built = []
+
+    def _new_project(self, p, mode, sleeve_mesh=None):
+        from unittest.mock import MagicMock
+
+        self.built.append((mode, p))
+        self.app = MagicMock()
+        self.key = mx.em_model_key(p, mode)
+
+    def _set_operating_point(self, p, rpm=None):
+        pass
+
+    def _analyze(self):
+        pass
+
+    def report(self, expressions, name="sipm_q"):
+        t = np.linspace(0.0, 1e-3, 31)
+        return {"Time": t, **{e: np.cos(2e4 * t) for e in expressions}}
+
+
+@pytest.mark.parametrize("run", ["open_circuit", "no_load_flux_density", "ac_loss"])
+def test_no_load_and_ac_runs_model_the_sleeve_non_conducting(run):
+    """Open circuit, no-load field and AC copper loss build the model with both sleeve conductivities 0
+    whatever the input, so they share the Maxwell model of the non-conducting sleeve and see no sleeve
+    eddy current (docs/methods.md, 2.1)."""
+    p = default_params("sleeved_bridged", sleeve_sigma_fibre=3e4, sleeve_sigma_transverse=1e4)
+    assert p.sleeve_conductivity_axial > 0
+    s = _RecordingSession()
+    call = {"open_circuit": lambda q: s.open_circuit(q), "no_load_flux_density": lambda q: s.no_load_flux_density(q),
+            "ac_loss": lambda q: s.ac_loss(q, 3000.0)}[run]
+    call(p)
+    (mode, q), = s.built
+    assert (q.sleeve_sigma_fibre, q.sleeve_sigma_transverse, q.sleeve_conductivity_axial) == (0.0, 0.0, 0.0)
+    plain = default_params("sleeved_bridged")
+    if run != "ac_loss":
+        assert q.current_rms == 0.0
+        plain = plain.replace(current_rms=0.0)
+    else:
+        assert q.em_rpm == 3000.0
+        plain = plain.replace(em_rpm=3000.0)
+    assert q == plain and mx.em_model_key(q, mode) == mx.em_model_key(plain, mode)
+    # the same run with a non-conducting sleeve builds the same model (open circuit and AC loss reuse it)
+    s2 = _RecordingSession()
+    {"open_circuit": lambda: s2.open_circuit(plain), "no_load_flux_density": lambda: s2.no_load_flux_density(plain),
+     "ac_loss": lambda: s2.ac_loss(plain, 3000.0)}[run]()
+    assert s2.built[0][1] == q
+
+
 # ---- 7. line report parsing ---------------------------------------------------------------------
 def test_parse_line_report_csv(tmp_path):
     f = tmp_path / "line.csv"

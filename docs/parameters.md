@@ -135,6 +135,7 @@ measure what similar names measured before the rebase:
 | `mech_cases` |  | - | illustrative |  | Comma-separated mechanical load cases solved for each point, from standstill_cold, standstill_hot, rated_cold, rated_hot, overspeed_cold, overspeed_hot ('' = the single case mech_rpm at mech_temperature, as before). Speeds: standstill 0, rated mech_rpm, overspeed overspeed_factor x mech_rpm; temperatures: hot mech_temperature, cold mech_temperature_cold. Each output gets one column per case (e.g. sh_sleeve_max__overspeed_hot), plus worst-case envelope columns and the lift-off speeds (docs/methods.md, 3.1) |
 | `overspeed_factor` | 1.2 | - | illustrative |  | Overspeed load cases: speed = this factor x mech_rpm (>= 1) |
 | `mech_temperature_cold` | 20.0 | degC | illustrative |  | Uniform rotor temperature of the '_cold' load cases (the '_hot' cases use mech_temperature); interference is defined at mech_ref_temperature |
+| `liftoff_search_tol` | 100.0 | rpm | illustrative |  | Lift-off speed of rotors whose sleeve contact is not linear in speed (sleeved_bridgeless): found with extra MAPDL runs at trial speeds until the bracket (contact pressure positive everywhere / zero somewhere) is this narrow; the value is its midpoint. 0 = no search, lift-off NaN (docs/methods.md, 3.1) |
 
 Topology-specific overrides of the defaults above:
 

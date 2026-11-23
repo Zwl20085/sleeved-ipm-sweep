@@ -178,6 +178,45 @@ def test_mech_liftoff_direct(cfg):
 
 
 @need_mapdl
+def test_mech_liftoff_search_bridgeless(cfg):
+    """Bridgeless default rotor, six cases (hot 120 degC): the lift-off speed (first element pressure
+    zero) is found by iteration, cold above the old two-point extrapolation from standstill and rated
+    (23 591 rpm, where the minimum pressure was still 0.398 MPa, docs/validation.md section 11) and
+    above overspeed (24 000 rpm, minimum pressure 0.079 MPa): 24 414 rpm measured; hot open at
+    standstill = 0, as on the linear path."""
+    from sipm.mapdl import solve_mech
+    from sipm.params import MECH_CASES
+
+    p = default_params("sleeved_bridgeless", mech_temperature=120.0, mech_cases=",".join(MECH_CASES))
+    r = solve_mech(p, cfg, cfg.workdir / "mech_liftoff_search_bridgeless")
+    tr = r["_liftoff_trials"]["cold"]
+    print(f"[lift-off search bridgeless] cold {r['liftoff_rpm_cold']:.1f} rpm ({r['liftoff_basis_cold']}); "
+          f"hot {r['liftoff_rpm_hot']:.1f} rpm ({r['liftoff_basis_hot']}); trials "
+          + ", ".join(f"{t['rpm']:.0f}{'c' if t['closed'] else 'o'}" for t in tr))
+    assert "found by iteration" in r["liftoff_basis_cold"] and f"{len(tr)} extra solve(s)" in r["liftoff_basis_cold"]
+    assert 24000 < r["liftoff_rpm_cold"] < 25000 and len(tr) <= 6
+    assert r["liftoff_rpm_hot"] == 0.0 and r["liftoff_basis_hot"] == "open at standstill_hot"
+    assert r["_liftoff_trials"]["hot"] == []
+
+
+@need_mapdl
+def test_mech_liftoff_search_reproduces_linear_bridged(cfg):
+    """Forced on the bridge-retained rotor (linear contact), the search reproduces the two-point
+    extrapolation of the same cases (39 357 rpm cold) within the 0.5 % accuracy of that line found by
+    direct runs (docs/validation.md section 11): 39 512 rpm measured, +0.39 %."""
+    from sipm.mapdl import solve_mech_cases
+
+    p = default_params("sleeved_bridged", mech_cases="standstill_cold,rated_cold,overspeed_cold")
+    lin = solve_mech_cases(p, cfg, cfg.workdir / "mech_liftoff_linear")
+    srch = solve_mech_cases(p, cfg, cfg.workdir / "mech_liftoff_search_bridged", liftoff_search=True)
+    print(f"[lift-off search bridged] linear {lin['liftoff_rpm_cold']:.1f} rpm ({lin['liftoff_basis_cold']}), "
+          f"search {srch['liftoff_rpm_cold']:.1f} rpm ({srch['liftoff_basis_cold']})")
+    assert math.isclose(lin["liftoff_rpm_cold"], 39357, abs_tol=1.0)
+    assert abs(srch["liftoff_rpm_cold"] - lin["liftoff_rpm_cold"]) <= 5e-3 * lin["liftoff_rpm_cold"]
+    assert "found by iteration" in srch["liftoff_basis_cold"]
+
+
+@need_mapdl
 def test_ring_multilayer_against_closed_form(cfg):
     """3-layer sleeve (hoop / +/-30 deg / hoop) with interference, winding prestress, 20000 rpm and
     100 K: every layer's hoop stress, the interface stresses and the contact pressure against the
@@ -344,3 +383,18 @@ def test_em_open_circuit(session):
     assert all(v["half_wave_asym"] < 1e-3 for v in chk["phases"].values())
     assert chk["emf_amp_spread"] < 1e-3
     assert math.isclose(chk["phase_shift_AB"], 120, abs_tol=1.0)
+
+
+@need_aedt
+def test_em_open_circuit_conducting_sleeve(session):
+    """With a conducting sleeve the open-circuit run models the sleeve non-conducting: the EMF is the
+    non-conducting value of docs/validation.md section 5 (99.240 V phase A), no start-up transient."""
+    from sipm.validation import open_circuit_check
+
+    p = default_params("sleeved_bridged", sleeve_sigma_fibre=3e4, sleeve_sigma_transverse=1e4)
+    chk = open_circuit_check(session.open_circuit(p), p)
+    emf = {k: v["emf_amp"] for k, v in chk["phases"].items()}
+    print(f"[open circuit, sigma_axial {p.sleeve_conductivity_axial:g} S/m] EMF amplitudes "
+          + ", ".join(f"{k} {v:.3f} V" for k, v in emf.items()))
+    assert math.isclose(emf["A"], 99.240, abs_tol=2e-3)
+    assert all(v["half_wave_asym"] < 1e-3 for v in chk["phases"].values())

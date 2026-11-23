@@ -137,7 +137,8 @@ files = sipm.plotResults(fullfile(tempdir, 'sipm_runs', 'demo', 'results.csv'), 
 `matlab/examples/example_tiny_sweep.m` runs a six-point stress sweep and plots it.
 
 Every finished point is cached in `<workdir>/<name>/cache/`; running the same sweep again
-solves only the missing points (`--stop-after N` interrupts on purpose, `--retry-failed`
+solves only the missing points and those whose cached result predates a solver change that
+affects them (`--stop-after N` interrupts on purpose, `--retry-failed`
 re-runs failed points). Before each point the runner waits until `min_free_ram_gb` (4 GB) of
 RAM is free and stops cleanly if that does not happen within `ram_wait_timeout_s`; with
 `max_solver_ram_gb` set it terminates a solver above that size and records the point as
@@ -181,8 +182,10 @@ failed. AEDT is restarted every `aedt_restart_every` (10) EM points.
 * **Load cases** (`mech_cases`, e.g. `"standstill_cold,rated_hot,overspeed_hot"`): every
   output above once per case as `<output>__<case>` (e.g. `sh_sleeve_max__overspeed_hot`), the
   worst case over them as `<output>__worst` with the governing case in `<output>__worst_case`,
-  and the lift-off speeds `liftoff_rpm_cold` / `liftoff_rpm_hot` (NaN for the bridgeless rotor,
-  whose contact is not linear in speed); the un-suffixed columns then
+  and the lift-off speeds `liftoff_rpm_cold` / `liftoff_rpm_hot` with their basis in
+  `liftoff_basis_cold` / `_hot` (for the bridgeless rotor, whose contact is not linear in speed,
+  found by iteration with extra runs to `liftoff_search_tol`, 100 rpm; 0 switches that off and
+  leaves NaN); the un-suffixed columns then
   hold the case named in `mech_case` (`rated_hot` if requested).
 * **Layered sleeve** (`sleeve_layers`): the sleeve columns above are envelopes over the layers;
   per layer `sh_sleeve_max_L<i>` and `sleeve_sf_L<i>` (1 = bore), the governing layer
@@ -276,7 +279,9 @@ In now:
   Hashin) and a safety factor at every stress point.
 * **Load cases as outputs**: standstill, rated speed and overspeed, each cold and hot, reported
   together with the worst case over them and the lift-off speed of the sleeve, validated
-  against the closed form and by direct runs at the predicted speed.
+  against the closed form and by direct runs at the predicted speed. For the bridgeless rotor,
+  whose contact is not linear in speed, the lift-off speed is found by iteration (extra
+  stress runs at trial speeds) instead of from a line.
 * **Multi-layer sleeves**: hoop and helical layers in one sleeve, each its own material in
   the stress model and evaluated with its own laminate for failure, with per-layer winding
   prestress instead of, or together with, the interference; validated against a disc +
@@ -289,17 +294,7 @@ In now:
 
 Proposed next:
 
-1. **Sleeve eddy-current loss in 3D, with the end return.** The circumferential, along-fibre
-   currents of a hoop-wound sleeve and the end-return resistance of helical layers need a 3D
-   or analytically corrected model; the 2D axial-current part above is the starting point.
-2. **Axial effects.** Generalised plane strain or an axisymmetric r-z model for the axial
-   stress, the sleeve end effects and the gaps between magnet segments.
-3. **Temperature in more detail.** Non-uniform temperature, matrix softening towards the glass
-   transition, and cure residual stress.
-4. **3D failure and long-term behaviour.** 3D failure criteria (Puck, LaRC, 3D Hashin),
-   delamination, and creep relaxation of the prestress.
-5. **Calibration.** Fitting the ply data to measurements (ring tests) and propagating the
-   uncertainty in fibre volume fraction.
+1. **Long-term behaviour.** Delamination, and creep relaxation of the prestress.
 
 ## 8. Cite
 
