@@ -1,0 +1,11 @@
+ *** NOTE ***                            CP =       0.344   TIME= 02:25:27
+ Deformable-deformable contact pair identified by real constant set 10
+
+ *** ERROR ***                           CP =       4.516   TIME= 02:22:51
+ The value of UX at node 16128 is 1061388.42.  It is greater than the
+ current limit of 1000000 (which can be reset on the NCNV command).
+ This generally indicates rigid body motion as a result of an
+ unconstrained model.  Verify that your model is properly constrained.
+
+ *** WARNING ***                         CP =      19.734   TIME= 02:25:41
+ Error estimation for elements with orthotropic material properties is

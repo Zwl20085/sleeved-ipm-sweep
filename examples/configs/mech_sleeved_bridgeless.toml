@@ -1,0 +1,13 @@
+[sweep]
+name = "mech_sleeved_bridgeless"
+physics = "mech"
+topology = "sleeved_bridgeless"
+
+[grid]
+sleeve_thickness = [1.5, 2.0]
+interference = [0.0, 0.2, 0.4]
+
+[plot]
+# Example lamination yield strength (MPa); replace with your material's value.
+sigma_allow = 400.0
+interference_fraction = 0.2

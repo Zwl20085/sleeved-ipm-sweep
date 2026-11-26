@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite the paper it accompanies (preferred-citation)
+  and, if relevant, the software itself.
+title: "sleeved-ipm-sweep"
+type: software
+version: 0.1.0
+license: MIT
+authors:
+  - family-names: Zhang
+    given-names: Wentao
+preferred-citation:
+  type: conference-paper
+  title: "Comparative Investigation of Bridge-Retained and Carbon Fiber Sleeved Interior Permanent Magnet Machines"
+  authors:
+    - family-names: Zhang
+      given-names: Wentao
+      affiliation: "School of Electrical Engineering, Southeast University"
+    - family-names: Wu
+      given-names: Zhongze
+      affiliation: "School of Electrical Engineering, Southeast University"
+    - family-names: Hua
+      given-names: Wei
+      affiliation: "School of Electrical Engineering, Southeast University"
+  collection-title: "International Conference on Electrical Machines and Systems (ICEMS 2026)"
+  year: 2026

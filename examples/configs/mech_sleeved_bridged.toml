@@ -1,0 +1,15 @@
+# Stress at 20000 rpm: 3 sleeve thicknesses x 5 radial interferences.
+[sweep]
+name = "mech_sleeved_bridged"
+physics = "mech"
+topology = "sleeved_bridged"
+
+[grid]
+sleeve_thickness = [1.0, 1.5, 2.0]
+interference = [0.0, 0.1, 0.2, 0.3, 0.4]
+
+[plot]
+# Example lamination yield strength for the feasible-region plot (MPa).
+# Replace with your material's value.
+sigma_allow = 400.0
+interference_fraction = 0.2   # interference <= 20 % of the sleeve thickness

@@ -1,0 +1,11 @@
+# Sleeved, bridges kept: 2 sleeve thicknesses x 5 current advance angles.
+# Bridges and ribs can be swept the same way (pm1_bridge_thickness, pm2_bridge_thickness,
+# pm1_rib_half_width, pm2_web_width); the magnet length follows from the construction.
+[sweep]
+name = "em_sleeved_bridged"
+physics = "em"
+topology = "sleeved_bridged"
+
+[grid]
+sleeve_thickness = [1.0, 2.0]
+gamma = [110.0, 120.0, 130.0, 140.0, 150.0]

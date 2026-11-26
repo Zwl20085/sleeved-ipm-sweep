@@ -1,0 +1,43 @@
+# Layered sleeve and winding prestress on the default bridge-retained rotor (docs/validation.md
+# section 12). Four points, each solved cold (20 degC = fitting temperature) at standstill,
+# rated speed (20000 rpm) and overspeed (24000 rpm), with the lift-off speed liftoff_rpm_cold:
+#   (a)  today's sleeve: one hoop layer with the Table II constants, 0.1 mm interference;
+#   (a2) one hoop layer of carbon_sm/epoxy (the material of (b) and (c)), 0.1 mm interference;
+#   (b)  hoop / +/-20 deg helical / hoop layers (2:1:1 from the bore), same material and interference;
+#   (c)  three hoop layers wound under tension, no interference: a uniform winding prestress of
+#        169.7 MPa gives the standstill minimum contact pressure of (a) (2.62 MPa).
+# `sipm winding --tension T --set sleeve_fibre=carbon_sm sleeve_layers=0:1,0:1,0:1` converts a
+# winding tension laid layer by layer into equivalent per-layer values for sleeve_layer_prestress.
+# A layered point reports, besides the usual sleeve columns (envelopes over the layers),
+# sh_sleeve_max_L<i> and sleeve_sf_L<i> per layer (1 = bore), the governing layer
+# sleeve_sf_layer and the interlaminar shear tau_sleeve_interface_max. The un-suffixed columns
+# hold the first case listed (standstill_cold); read <output>__rated_cold etc.
+[sweep]
+name = "mech_multilayer_sleeve"
+physics = "mech"
+topology = "sleeved_bridged"
+
+[base]
+mech_cases = "standstill_cold,rated_cold,overspeed_cold"
+mech_rpm = 20000.0
+sleeve_matrix = "epoxy"
+sleeve_vf = 0.55
+sleeve_micromechanics = "chamis"
+
+[[points]]
+interference = 0.1
+
+[[points]]
+sleeve_fibre = "carbon_sm"
+interference = 0.1
+
+[[points]]
+sleeve_fibre = "carbon_sm"
+sleeve_layers = "0:2,20:1,0:1"
+interference = 0.1
+
+[[points]]
+sleeve_fibre = "carbon_sm"
+sleeve_layers = "0:1,0:1,0:1"
+sleeve_layer_prestress = "169.7"
+interference = 0.0

@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Ansys Electronics Desktop
+*.aedt
+*.aedt.lock
+*.aedtresults/
+*.aedb/
+*.asol
+*.lock
+
+# MAPDL scratch and results
+*.rst
+*.db
+*.dbb
+*.esav
+*.emat
+*.full
+*.mntr
+*.ldhi
+*.osav
+*.page
+*.stat
+*.err
+*.log
+*.BCS
+*.DSP
+*.r0[0-9][0-9]
+
+# run output that should live in the work directory, not in the repo
+sipm_runs/
+figures/
+*.png
+!docs/img/*.png
+
+# MATLAB
+*.asv
+*.mex*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AEDT / solver logs written to the working directory
+batch.log
+*.out
+!tests/fixtures/*.out

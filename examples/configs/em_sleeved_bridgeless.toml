@@ -1,0 +1,9 @@
+# Sleeved bridgeless (modular lamination): pole-tip lip depth x current advance angle.
+[sweep]
+name = "em_sleeved_bridgeless"
+physics = "em"
+topology = "sleeved_bridgeless"
+
+[grid]
+lip_depth = [0.5, 1.5]
+gamma = [115.0, 125.0, 135.0]

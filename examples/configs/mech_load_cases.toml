@@ -1,0 +1,34 @@
+# Load-case set: every point is solved at standstill, rated speed (mech_rpm) and overspeed
+# (overspeed_factor x mech_rpm), each cold (mech_temperature_cold) and hot (mech_temperature),
+# for 3 sleeve thicknesses x 3 radial interferences. The interference is defined at
+# mech_ref_temperature (20 degC). Six MAPDL runs per point (cases with equal speed and
+# temperature are solved once).
+#
+# Columns per point: every stress output once per case (e.g. sh_sleeve_max__overspeed_hot), the
+# worst value over the cases with the case that governs (sh_sleeve_max__worst,
+# sh_sleeve_max__worst_case; likewise svm_lam_max, sr_sleeve_max, the sleeve failure indices,
+# sleeve_sf, sleeve_open_fraction, contact_p_min), and the lift-off speeds liftoff_rpm_cold /
+# liftoff_rpm_hot. The un-suffixed columns hold the rated_hot case (named in mech_case).
+[sweep]
+name = "mech_load_cases"
+physics = "mech"
+topology = "sleeved_bridged"
+
+[base]
+mech_cases = "standstill_cold,standstill_hot,rated_cold,rated_hot,overspeed_cold,overspeed_hot"
+mech_rpm = 20000.0
+overspeed_factor = 1.2
+mech_temperature = 120.0
+mech_temperature_cold = 20.0
+mech_ref_temperature = 20.0
+
+[grid]
+sleeve_thickness = [1.0, 1.5, 2.0]
+interference = [0.05, 0.1, 0.2]
+
+[plot]
+# Example lamination yield strength for the feasible-region plot (MPa), drawn for the
+# un-suffixed (rated_hot) column; the stress-line plots are drawn for the rated_hot and the
+# worst-case columns. Replace with your material's value.
+sigma_allow = 400.0
+interference_fraction = 0.2
